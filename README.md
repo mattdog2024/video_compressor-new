@@ -100,18 +100,15 @@ video_compressor/
 
 ## 📦 自动发布 Windows EXE
 
-GitHub 会在全新的 Windows 电脑上自动下载 FFmpeg、运行测试、打包 EXE，并把成品放到仓库的 [Releases](../../releases) 页面。源码里不需要保存 FFmpeg 的大文件。
+现在是**全自动**的：只要有新代码同步到 GitHub 的 `main` 分支，GitHub 就会在全新的 Windows 电脑上自动下载 FFmpeg、运行测试、打包 EXE，并把成品放到仓库的 [Releases](../../releases) 页面。源码里不需要保存 FFmpeg 的大文件。
 
-最简单的发布方法是在 GitHub 仓库打开 **Actions**，选择 **Build and release Windows EXE**，点击 **Run workflow**，在版本号中填写例如 `v1.0.1`，然后运行。打包完成后，到 **Releases** 页面下载 `VideoCompressor-v1.0.1-windows-x64.exe`。
+你不用填写版本号，也不用点击发布。GitHub 会自己从 `v1.0.1` 开始往上数，每次同步都会自动生成下一个版本，例如 `v1.0.2`、`v1.0.3`。
 
-如果使用 Git 命令，也可以在要发布的提交上创建并推送版本标签：
+以后你只要让我“把新代码同步到 GitHub”，等待几分钟后到 **Releases** 页面下载最新的 EXE 就可以了。每次发布包的名字类似：
 
-```bash
-git tag v1.0.1
-git push origin v1.0.1
+```text
+VideoCompressor-v1.0.1-windows-x64.exe
 ```
-
-推送的标签以 `v` 开头时，GitHub 会自动开始发布。每个版本号只能发布一次；下一次请使用新的版本号，例如 `v1.0.2`。
 
 ## 📝 许可证
 
