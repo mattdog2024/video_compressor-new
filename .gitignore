@@ -1,0 +1,29 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Local application state and logs
+settings.json
+*.log
+
+# PyInstaller outputs and temporary build files
+build/
+dist/
+*.spec.bak
+
+# Bundled executables and release archives are not source code.
+# Download FFmpeg during a Windows build as documented in README.md.
+assets/ffmpeg/
+*.zip
+*.7z
+
+# IDE and operating-system files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
