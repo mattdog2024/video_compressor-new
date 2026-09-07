@@ -5,7 +5,7 @@ import subprocess
 import threading
 import time
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional, Callable, List
 from enum import Enum
 
@@ -41,6 +41,7 @@ class CompressTask:
     remaining_time: Optional[float] = None
     error_message: str = ""
     output_size: int = 0
+    fallback_note: str = ""
 
 
 @dataclass
@@ -232,13 +233,14 @@ class FFmpegEngine:
 
         self._thread = threading.Thread(
             target=self._run_process,
-            args=(cmd, task, total_duration),
+            args=(cmd, task, total_duration, options, source_height),
             daemon=True
         )
         self._thread.start()
 
-    def _run_process(self, cmd: list, task: CompressTask, total_duration: float):
-        """在后台线程中运行FFmpeg进程"""
+    def _execute_process(self, cmd: list, task: CompressTask,
+                         total_duration: float) -> tuple[int, str]:
+        """执行一次FFmpeg命令，并完整收集错误输出。"""
         stderr_output = []
 
         def _drain_stderr():
@@ -250,46 +252,117 @@ class FFmpegEngine:
             except Exception:
                 pass
 
+        creation_flags = 0
+        if os.name == 'nt':
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
+        self._process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding='utf-8',
+            errors='replace',
+            creationflags=creation_flags
+        )
+
+        # 启动stderr后台读取线程，防止管道缓冲区填满导致FFmpeg阻塞
+        stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        stderr_thread.start()
+
+        # 解析进度
+        self._parse_progress(self._process, task, total_duration)
+
+        # 等待进程和stderr读取线程完成，避免遗漏真正的失败原因
+        self._process.wait()
+        stderr_thread.join(timeout=2)
+        return self._process.returncode, "".join(stderr_output)
+
+    @staticmethod
+    def _is_gpu_encoder(encoder_name: str) -> bool:
+        """判断编码器是否依赖显卡硬件。"""
+        return encoder_name in {
+            "h264_nvenc", "hevc_nvenc",
+            "h264_qsv", "hevc_qsv",
+            "h264_amf", "hevc_amf",
+        }
+
+    @staticmethod
+    def _format_error(stderr_output: str) -> str:
+        """提取对用户有用的FFmpeg错误信息。"""
+        lines = [line.strip() for line in stderr_output.splitlines() if line.strip()]
+        if not lines:
+            return "未知错误"
+
+        # 驱动/API 不兼容等根因通常在前面，优先保留这些行。
+        important_words = (
+            "Driver does not support", "minimum required", "Cannot load",
+            "No capable devices", "No NVENC capable", "Error while opening encoder",
+        )
+        important = [line for line in lines if any(word in line for word in important_words)]
+        selected = important or lines[-8:]
+        return "\n".join(selected)[-1000:]
+
+    def _complete_task(self, task: CompressTask):
+        """标记任务成功并通知界面。"""
+        task.status = TaskStatus.COMPLETED
+        task.progress = 100.0
+        if os.path.exists(task.output_file):
+            task.output_size = os.path.getsize(task.output_file)
+        if self._on_complete:
+            self._on_complete(task)
+
+    def _run_process(self, cmd: list, task: CompressTask, total_duration: float,
+                     options: CompressOptions, source_height: int):
+        """在后台线程中运行FFmpeg；GPU不可用时自动改用CPU。"""
         try:
-            creation_flags = 0
-            if os.name == 'nt':
-                creation_flags = subprocess.CREATE_NO_WINDOW
-
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                encoding='utf-8',
-                errors='replace',
-                creationflags=creation_flags
-            )
-
-            # 启动stderr后台读取线程，防止缓冲区满导致FFmpeg阻塞
-            stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
-            stderr_thread.start()
-
-            # 解析进度
-            self._parse_progress(self._process, task, total_duration)
-
-            # 等待完成
-            self._process.wait()
+            returncode, stderr_output = self._execute_process(cmd, task, total_duration)
 
             if self._cancelled:
                 task.status = TaskStatus.CANCELLED
-            elif self._process.returncode == 0:
-                task.status = TaskStatus.COMPLETED
-                task.progress = 100.0
-                # 获取输出文件大小
-                if os.path.exists(task.output_file):
-                    task.output_size = os.path.getsize(task.output_file)
-                if self._on_complete:
-                    self._on_complete(task)
-            else:
-                err_msg = "".join(stderr_output[-20:]) if stderr_output else "未知错误"
+                return
+
+            if returncode == 0:
+                self._complete_task(task)
+                return
+
+            # 显卡驱动、GPU占用或运行库变化可能让已检测到的GPU编码器失效。
+            # 此时自动用CPU重试一次，避免用户只看到难懂的“encoder before EOF”。
+            if self._is_gpu_encoder(self._resolve_encoder(options)):
+                gpu_error = self._format_error(stderr_output)
+                task.fallback_note = "GPU编码不可用，已自动改用CPU编码"
+                logger.warning("%s；改用 libx264 重试", gpu_error)
+                task.progress = 0.0
+                task.speed = ""
+                task.remaining_time = None
+                if self._on_progress:
+                    self._on_progress(task)
+
+                fallback_options = replace(options, encoder="libx264", gpu_encoder="")
+                fallback_cmd = self.build_command(
+                    task, fallback_options, total_duration, source_height
+                )
+                returncode, fallback_stderr = self._execute_process(
+                    fallback_cmd, task, total_duration
+                )
+                if self._cancelled:
+                    task.status = TaskStatus.CANCELLED
+                    return
+                if returncode == 0:
+                    self._complete_task(task)
+                    return
+                fallback_error = self._format_error(fallback_stderr)
                 task.status = TaskStatus.FAILED
-                task.error_message = err_msg[-500:]
+                task.error_message = (
+                    f"GPU编码失败：\n{gpu_error}\n\nCPU重试也失败：\n{fallback_error}"
+                )[-1000:]
                 if self._on_error:
                     self._on_error(task)
+                return
+
+            task.status = TaskStatus.FAILED
+            task.error_message = self._format_error(stderr_output)
+            if self._on_error:
+                self._on_error(task)
 
         except Exception as e:
             task.status = TaskStatus.FAILED

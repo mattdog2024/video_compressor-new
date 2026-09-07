@@ -944,8 +944,12 @@ class VideoCompressorApp:
                             ratio = task.output_size / input_info.file_size * 100
                             size_info = f" | 压缩率: {ratio:.1f}% | 输出: {format_file_size(task.output_size)}"
 
+                    fallback_info = ""
+                    if task.fallback_note:
+                        fallback_info = f" | {task.fallback_note}"
+
                     self.status_bar.config(
-                        text=f"✓ 完成: {os.path.basename(task.output_file)}{size_info}"
+                        text=f"✓ 完成: {os.path.basename(task.output_file)}{size_info}{fallback_info}"
                     )
 
                     # 处理下一个

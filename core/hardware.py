@@ -9,6 +9,12 @@ from utils.helpers import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
 
+GPU_ENCODER_NAMES = {
+    "h264_nvenc", "hevc_nvenc",
+    "h264_qsv", "hevc_qsv",
+    "h264_amf", "hevc_amf",
+}
+
 
 @dataclass
 class EncoderInfo:
@@ -29,6 +35,30 @@ class HardwareProfile:
     best_cpu: Optional[EncoderInfo] = None
     ffmpeg_version: str = ""
     detection_log: str = ""
+
+
+def _verify_gpu_encoder(encoder_name: str) -> tuple[bool, str]:
+    """用极短的编码任务验证GPU编码器，而不只检查FFmpeg是否编译了它。"""
+    command = [
+        get_ffmpeg_path(), "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=c=black:s=64x64:r=1:d=1",
+        "-frames:v", "1", "-c:v", encoder_name, "-f", "null", "-",
+    ]
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW if _is_windows() else 0
+        )
+        if result.returncode == 0:
+            return True, ""
+
+        output = (result.stderr or result.stdout or "").strip()
+        last_line = output.splitlines()[0] if output else f"返回代码 {result.returncode}"
+        return False, last_line[:180]
+    except subprocess.TimeoutExpired:
+        return False, "测试超时"
+    except Exception as e:
+        return False, f"测试失败: {e}"
 
 
 def detect_hardware() -> HardwareProfile:
@@ -80,10 +110,17 @@ def detect_hardware() -> HardwareProfile:
         # 在编码器列表中查找
         pattern = rf"\b{re.escape(enc.name)}\b"
         if re.search(pattern, encoder_output):
-            enc.available = True
-            if enc.type == "gpu":
+            if enc.name in GPU_ENCODER_NAMES:
+                enc.available, reason = _verify_gpu_encoder(enc.name)
+            else:
+                enc.available = True
+                reason = ""
+
+            if enc.type == "gpu" and enc.available:
                 profile.gpu_encoders.append(enc)
                 log_lines.append(f"✓ 检测到GPU编码器: {enc.display_name}")
+            elif enc.type == "gpu":
+                log_lines.append(f"✗ GPU编码器不可用: {enc.display_name}（{reason}）")
             else:
                 profile.cpu_encoders.append(enc)
                 log_lines.append(f"✓ 检测到CPU编码器: {enc.display_name}")
