@@ -98,6 +98,21 @@ video_compressor/
 └── requirements.txt     # Python依赖
 ```
 
+## 📦 自动发布 Windows EXE
+
+GitHub 会在全新的 Windows 电脑上自动下载 FFmpeg、运行测试、打包 EXE，并把成品放到仓库的 [Releases](../../releases) 页面。源码里不需要保存 FFmpeg 的大文件。
+
+最简单的发布方法是在 GitHub 仓库打开 **Actions**，选择 **Build and release Windows EXE**，点击 **Run workflow**，在版本号中填写例如 `v1.0.1`，然后运行。打包完成后，到 **Releases** 页面下载 `VideoCompressor-v1.0.1-windows-x64.exe`。
+
+如果使用 Git 命令，也可以在要发布的提交上创建并推送版本标签：
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+推送的标签以 `v` 开头时，GitHub 会自动开始发布。每个版本号只能发布一次；下一次请使用新的版本号，例如 `v1.0.2`。
+
 ## 📝 许可证
 
 本项目仅供个人学习使用。
