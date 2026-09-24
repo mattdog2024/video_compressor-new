@@ -39,15 +39,23 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
 
-      - name: Download FFmpeg for the release package
+      - name: Download driver-compatible FFmpeg for the release package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $downloadUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-          $archivePath = Join-Path $env:RUNNER_TEMP "ffmpeg-release-essentials.zip"
+          # Newer FFmpeg builds require NVENC API 13.0.  This fixed 7.1.1 build
+          # is compatible with NVIDIA drivers exposing API 12.2, while still
+          # providing H.264, AAC, and the platform-compatible yuv420p output.
+          $downloadUrl = "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip"
+          $archivePath = Join-Path $env:RUNNER_TEMP "ffmpeg-7.1.1-essentials_build.zip"
           $extractPath = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          $expectedSha256 = "04861d3339c5ebe38b56c19a15cf2c0cc97f5de4fa8910e4d47e5e6404e4a2d4"
 
           Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          $actualSha256 = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "FFmpeg 7.1.1 checksum verification failed."
+          }
           Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
 
           $ffmpeg = Get-ChildItem -Path $extractPath -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1

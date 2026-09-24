@@ -166,7 +166,7 @@ RESOLUTION_MAP = {
 }
 
 QUALITY_PRESETS = {
-    "极速": {"crf": 28, "preset": "ultrafast", "audio_br": "96k"},
+    "极速": {"crf": 30, "preset": "ultrafast", "audio_br": "96k"},
     "快速": {"crf": 26, "preset": "veryfast", "audio_br": "128k"},
     "标准": {"crf": 23, "preset": "medium", "audio_br": "128k"},
     "高质量": {"crf": 18, "preset": "slow", "audio_br": "192k"},

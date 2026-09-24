@@ -147,16 +147,20 @@ class FFmpegEngine:
             crf = quality_config["crf"]
             cq_value = max(0, min(51, crf))
             cmd.extend(["-c:v", encoder_name])
-            cmd.extend(["-rc", "vbr_hq"])
+            # “极速”优先吞吐量；其他模式继续以画质优先的高质量VBR编码。
+            rate_control = "vbr" if options.quality == "极速" else "vbr_hq"
+            preset = "p1" if options.quality == "极速" else "p4"
+            cmd.extend(["-rc", rate_control])
             cmd.extend(["-cq", str(cq_value)])
-            cmd.extend(["-preset", "p4"])  # medium quality/speed
+            cmd.extend(["-preset", preset])
             cmd.extend(["-b:v", "0"])
         elif encoder_name in ("h264_qsv", "hevc_qsv"):
             # Intel QuickSync
             crf = quality_config["crf"]
             cmd.extend(["-c:v", encoder_name])
             cmd.extend(["-global_quality", str(crf)])
-            cmd.extend(["-preset", quality_config["preset"]])
+            qsv_preset = "veryfast" if options.quality == "极速" else quality_config["preset"]
+            cmd.extend(["-preset", qsv_preset])
         elif encoder_name in ("h264_amf", "hevc_amf"):
             # AMD AMF
             crf = quality_config["crf"]
@@ -172,7 +176,8 @@ class FFmpegEngine:
             cmd.extend(["-c:v", encoder_name])
             cmd.extend(["-crf", str(crf)])
             cmd.extend(["-preset", preset])
-            cmd.extend(["-tune", "film"])
+            if options.quality != "极速":
+                cmd.extend(["-tune", "film"])
 
         # 不少上传平台不支持 10 位 H.264（High 10），即使Windows播放器能够播放。
         # 使用 Main + yuv420p 可确保输出为常见的 8 位 H.264 MP4。
@@ -185,7 +190,8 @@ class FFmpegEngine:
             cmd.extend(["-an"])
         else:
             cmd.extend(["-c:a", "aac"])
-            audio_br = options.audio_bitrate
+            # 极速模式必须连音频一起降到预设码率；旧代码错误地一直沿用128k。
+            audio_br = quality_config["audio_br"] if options.quality == "极速" else options.audio_bitrate
             cmd.extend(["-b:a", audio_br])
             cmd.extend(["-ac", "2"])  # 立体声
             if options.platform_compatibility:

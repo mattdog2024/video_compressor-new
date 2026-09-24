@@ -31,7 +31,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.2")
+        self.root.title("万能视频压缩器 v1.0.3")
         self.root.geometry("820x900")
         self.root.minsize(750, 800)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -924,6 +924,10 @@ class VideoCompressorApp:
                         text=f"FFmpeg {data.ffmpeg_version} | {gpu_info}",
                         fg=DARK_THEME["success"] if data.best_gpu else DARK_THEME["warning"]
                     )
+                    if not data.best_gpu:
+                        self.status_bar.config(
+                            text="提示：没有可用的GPU编码，极速模式会使用CPU，速度会比显卡加速慢"
+                        )
 
                 elif msg_type == "hw_error":
                     self.hw_label.config(text="硬件检测失败", fg=DARK_THEME["error"])
