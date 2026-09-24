@@ -63,6 +63,7 @@ class CompressOptions:
     subtitle_font_size: int = 24
     subtitle_font_color: str = "#FFFFFF"
     gpu_encoder: str = ""        # 具体GPU编码器名
+    platform_compatibility: bool = True  # 主流平台兼容：H.264 8位 + AAC-LC 48k
     extra_args: List[str] = field(default_factory=list)
 
 
@@ -132,6 +133,8 @@ class FFmpegEngine:
 
         # === 视频编码 ===
         encoder_name = self._resolve_encoder(options)
+        if options.platform_compatibility:
+            encoder_name = self._get_platform_compatible_encoder(encoder_name)
 
         if vf_parts:
             cmd.extend(["-vf", ",".join(vf_parts)])
@@ -171,6 +174,12 @@ class FFmpegEngine:
             cmd.extend(["-preset", preset])
             cmd.extend(["-tune", "film"])
 
+        # 不少上传平台不支持 10 位 H.264（High 10），即使Windows播放器能够播放。
+        # 使用 Main + yuv420p 可确保输出为常见的 8 位 H.264 MP4。
+        if options.platform_compatibility:
+            cmd.extend(["-profile:v", "main"])
+            cmd.extend(["-pix_fmt", "yuv420p"])
+
         # === 音频 ===
         if options.remove_audio:
             cmd.extend(["-an"])
@@ -179,6 +188,9 @@ class FFmpegEngine:
             audio_br = options.audio_bitrate
             cmd.extend(["-b:a", audio_br])
             cmd.extend(["-ac", "2"])  # 立体声
+            if options.platform_compatibility:
+                # AAC-LC / 48kHz 是主流视频平台最稳妥的音频组合。
+                cmd.extend(["-profile:a", "aac_low", "-ar", "48000"])
 
             # 音量调节
             if options.volume != 100:
@@ -210,6 +222,22 @@ class FFmpegEngine:
                 return options.gpu_encoder
             return "libx264"
         return options.encoder
+
+    @staticmethod
+    def _get_platform_compatible_encoder(encoder_name: str) -> str:
+        """将H.265或未知编码选择安全地收敛到平台通用的H.264。"""
+        compatible_encoders = {
+            "h264_nvenc", "h264_qsv", "h264_amf", "libx264",
+        }
+        h265_to_h264 = {
+            "hevc_nvenc": "h264_nvenc",
+            "hevc_qsv": "h264_qsv",
+            "hevc_amf": "h264_amf",
+            "libx265": "libx264",
+        }
+        if encoder_name in compatible_encoders:
+            return encoder_name
+        return h265_to_h264.get(encoder_name, "libx264")
 
     def start_task(self, task: CompressTask, options: CompressOptions,
                    total_duration: float = 0,

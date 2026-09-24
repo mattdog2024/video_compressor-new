@@ -31,7 +31,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v9.0")
+        self.root.title("万能视频压缩器 v1.0.2")
         self.root.geometry("820x900")
         self.root.minsize(750, 800)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -217,6 +217,18 @@ class VideoCompressorApp:
             font=FONTS["body"]
         )
         self.remove_audio_cb.pack(side="left")
+
+        self.platform_compatibility_var = tk.BooleanVar(value=True)
+        self.platform_compatibility_cb = tk.Checkbutton(
+            row2, text="平台兼容模式（推荐）",
+            variable=self.platform_compatibility_var,
+            bg=DARK_THEME["surface"], fg=DARK_THEME["text"],
+            selectcolor=DARK_THEME["entry_bg"],
+            activebackground=DARK_THEME["surface"],
+            activeforeground=DARK_THEME["text"],
+            font=FONTS["body"]
+        )
+        self.platform_compatibility_cb.pack(side="left", padx=(15, 0))
 
         # 第三行 - 输出目录
         row3 = tk.Frame(output_section, bg=DARK_THEME["surface"])
@@ -570,6 +582,7 @@ class VideoCompressorApp:
         self.skip_end_var.set(str(s.get("skip_end", 0)))
         self.suffix_var.set(s.get("filename_suffix", "_720p"))
         self.remove_audio_var.set(s.get("remove_audio", False))
+        self.platform_compatibility_var.set(s.get("platform_compatibility", True))
         self.output_dir_var.set(s.get("last_output_dir", ""))
         self.after_complete_var.set(s.get("after_complete", "无操作"))
 
@@ -595,6 +608,7 @@ class VideoCompressorApp:
             "skip_end": self._safe_int(self.skip_end_var.get()),
             "filename_suffix": self.suffix_var.get(),
             "remove_audio": self.remove_audio_var.get(),
+            "platform_compatibility": self.platform_compatibility_var.get(),
             "last_output_dir": self.output_dir_var.get(),
             "after_complete": self.after_complete_var.get(),
             "subtitle_mode": mode_map.get(self.subtitle_mode_var.get(), "none"),
@@ -853,6 +867,7 @@ class VideoCompressorApp:
             skip_start=self._safe_float(self.skip_start_var.get()),
             skip_end=self._safe_float(self.skip_end_var.get()),
             remove_audio=self.remove_audio_var.get(),
+            platform_compatibility=self.platform_compatibility_var.get(),
             subtitle_mode=subtitle_mode,
             subtitle_stream_index=subtitle_stream_index,
             external_subtitle_path=external_sub_path,
