@@ -16,6 +16,7 @@ from core.probe import probe_video, VideoInfo
 from core.ffmpeg_engine import (
     FFmpegEngine, CompressTask, CompressOptions, TaskStatus
 )
+from core.task_pool import TaskPool
 from utils.helpers import (
     format_file_size, format_duration, format_time_remaining,
     load_settings, save_settings, get_default_settings,
@@ -31,7 +32,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.3")
+        self.root.title("万能视频压缩器 v1.0.4")
         self.root.geometry("820x900")
         self.root.minsize(750, 800)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -49,7 +50,11 @@ class VideoCompressorApp:
         self.settings = load_settings()
         self.hardware: Optional[HardwareProfile] = None
         self.encoder_choices: list = []
-        self.engine = FFmpegEngine()
+        self.engines: Dict[int, FFmpegEngine] = {}
+        self.active_tasks: Dict[int, CompressTask] = {}
+        self.task_pool = TaskPool(self.settings.get("parallel_tasks", 3))
+        self._reserved_output_paths = set()
+        self._cancel_requested = False
 
         # 文件管理
         self.file_counter = 0
@@ -230,7 +235,20 @@ class VideoCompressorApp:
         )
         self.platform_compatibility_cb.pack(side="left", padx=(15, 0))
 
-        # 第三行 - 输出目录
+        # 第三行 - 批量并行数
+        parallel_row = tk.Frame(output_section, bg=DARK_THEME["surface"])
+        parallel_row.pack(fill="x", padx=15, pady=(0, 8))
+
+        self._create_label(parallel_row, "同时压缩:").pack(side="left")
+        self.parallel_tasks_var = tk.StringVar(value="3")
+        self.parallel_tasks_combo = ttk.Combobox(
+            parallel_row, textvariable=self.parallel_tasks_var,
+            values=["1", "2", "3"], state="readonly", width=5
+        )
+        self.parallel_tasks_combo.pack(side="left", padx=(5, 5))
+        self._create_label(parallel_row, "个任务（最多 3 个）").pack(side="left")
+
+        # 第四行 - 输出目录
         row3 = tk.Frame(output_section, bg=DARK_THEME["surface"])
         row3.pack(fill="x", padx=15, pady=(0, 8))
 
@@ -331,7 +349,7 @@ class VideoCompressorApp:
         self.subtitle_mode_var = tk.StringVar(value="无")
         self.subtitle_mode_combo = ttk.Combobox(
             sub_row, textvariable=self.subtitle_mode_var,
-            values=["无", "内置字幕", "外挂字幕"],
+            values=["无", "内置字幕（烧录）", "外挂字幕（烧录）"],
             state="readonly", width=12
         )
         self.subtitle_mode_combo.pack(side="left", padx=(5, 10))
@@ -587,9 +605,14 @@ class VideoCompressorApp:
         self.after_complete_var.set(s.get("after_complete", "无操作"))
 
         sub_mode = s.get("subtitle_mode", "无")
-        mode_map = {"none": "无", "embedded": "内置字幕", "external": "外挂字幕",
-                    "无": "无", "内置字幕": "内置字幕", "外挂字幕": "外挂字幕"}
+        mode_map = {
+            "none": "无", "embedded": "内置字幕（烧录）", "external": "外挂字幕（烧录）",
+            "无": "无", "内置字幕": "内置字幕（烧录）", "外挂字幕": "外挂字幕（烧录）",
+            "内置字幕（烧录）": "内置字幕（烧录）",
+            "外挂字幕（烧录）": "外挂字幕（烧录）",
+        }
         self.subtitle_mode_var.set(mode_map.get(sub_mode, "无"))
+        self.parallel_tasks_var.set(str(max(1, min(3, self._safe_int(s.get("parallel_tasks", 3), 3)))))
 
         try:
             self.sub_font_size_var.set(str(s.get("subtitle_font_size", 24)))
@@ -598,7 +621,11 @@ class VideoCompressorApp:
 
     def _save_settings_from_ui(self):
         """从UI保存设置"""
-        mode_map = {"无": "none", "内置字幕": "embedded", "外挂字幕": "external"}
+        mode_map = {
+            "无": "none",
+            "内置字幕（烧录）": "embedded",
+            "外挂字幕（烧录）": "external",
+        }
         self.settings.update({
             "resolution": self.resolution_var.get(),
             "quality": self.quality_var.get(),
@@ -609,6 +636,7 @@ class VideoCompressorApp:
             "filename_suffix": self.suffix_var.get(),
             "remove_audio": self.remove_audio_var.get(),
             "platform_compatibility": self.platform_compatibility_var.get(),
+            "parallel_tasks": max(1, min(3, self._safe_int(self.parallel_tasks_var.get(), 3))),
             "last_output_dir": self.output_dir_var.get(),
             "after_complete": self.after_complete_var.get(),
             "subtitle_mode": mode_map.get(self.subtitle_mode_var.get(), "none"),
@@ -661,13 +689,14 @@ class VideoCompressorApp:
 
     def _clear_file_list(self):
         """清空文件列表"""
-        if self.engine.is_running():
+        if self.task_pool.has_work() or self._has_running_tasks():
             messagebox.showinfo("提示", "请先停止当前压缩任务")
             return
         self.file_list.clear()
         self.file_queue.clear()
         self.file_info.clear()
         self.task_queue.clear()
+        self.task_pool.reset([])
         self.file_counter = 0
         self.current_task_index = 0
         self.progress_frame.reset()
@@ -710,26 +739,30 @@ class VideoCompressorApp:
         self.btn_load_sub.pack_forget()
         self.subtitle_file_label.pack_forget()
 
-        if mode == "内置字幕":
+        if mode == "内置字幕（烧录）":
             # 显示字幕流选择
             self._update_subtitle_streams()
             self.subtitle_stream_combo.pack(side="left", padx=(0, 10))
-        elif mode == "外挂字幕":
+        elif mode == "外挂字幕（烧录）":
             self.btn_load_sub.pack(side="left", padx=(0, 10))
             self.subtitle_file_label.pack(side="left")
 
     def _update_subtitle_streams(self):
         """更新内置字幕流列表"""
-        streams = []
+        streams = [(None, None, "自动：每个视频默认字幕（没有默认则第一条）")]
         for fid, info in self.file_info.items():
             if info.has_subtitle:
                 for sub in info.subtitle_streams:
                     lang = sub.language or "未知"
                     title = f" - {sub.title}" if sub.title else ""
-                    label = f"{info.file_name}: [{sub.index}] {sub.codec} ({lang}{title})"
+                    default_mark = " 默认" if sub.default else ""
+                    label = (
+                        f"{info.file_name}: 第{sub.ordinal + 1}条 [{sub.index}] "
+                        f"{sub.codec} ({lang}{title}{default_mark})"
+                    )
                     streams.append((fid, sub.index, label))
 
-        if streams:
+        if len(streams) > 1:
             labels = [s[2] for s in streams]
             self.subtitle_stream_combo["values"] = labels
             self.subtitle_stream_combo.current(0)
@@ -752,7 +785,7 @@ class VideoCompressorApp:
 
     def _start_compression(self):
         """开始压缩"""
-        if self.engine.is_running():
+        if self.task_pool.has_work() or self._has_running_tasks():
             messagebox.showinfo("提示", "已有任务正在运行")
             return
 
@@ -766,24 +799,36 @@ class VideoCompressorApp:
         # 构建任务队列
         self.task_queue = list(self.file_queue.keys())
         self.current_task_index = 0
+        self._cancel_requested = False
+        self.engines.clear()
+        self.active_tasks.clear()
+        self._reserved_output_paths.clear()
+        self.task_pool.set_max_parallel_tasks(self.parallel_tasks_var.get())
+        self.task_pool.reset(self.task_queue)
+        self.progress_frame.reset()
+        for fid in self.task_queue:
+            self.file_list.update_status(fid, "等待中", DARK_THEME["warning"])
+        self._start_available_tasks()
 
-        # 开始处理第一个
-        self._process_next_task()
-
-    def _process_next_task(self):
-        """处理队列中的下一个任务"""
-        if self.current_task_index >= len(self.task_queue):
-            self._all_tasks_complete()
+    def _start_available_tasks(self):
+        """填满可用并行槽位，最多同时启动三个压缩任务。"""
+        if self._cancel_requested:
             return
+        self.task_pool.start_available(self._start_single_task)
+        self._refresh_task_summary()
 
-        fid = self.task_queue[self.current_task_index]
+    def _start_single_task(self, fid: int):
+        """启动单个压缩任务，由 TaskPool 控制同时运行数量。"""
         file_path = self.file_queue[fid]
         info = self.file_info[fid]
 
         # 生成输出路径
         output_dir = self.output_dir_var.get() or os.path.dirname(file_path)
         suffix = self.suffix_var.get() or "_720p"
-        output_path = FFmpegEngine.generate_output_path(file_path, output_dir, suffix)
+        output_path = FFmpegEngine.generate_output_path(
+            file_path, output_dir, suffix, self._reserved_output_paths
+        )
+        self._reserved_output_paths.add(output_path)
 
         # 创建任务
         task = CompressTask(
@@ -793,29 +838,16 @@ class VideoCompressorApp:
         )
 
         # 构建选项
-        options = self._build_options()
+        options = self._build_options(fid)
 
         # 更新UI
         self.file_list.update_status(fid, "压缩中...", DARK_THEME["accent"])
-        self.task_info_label.config(
-            text=f"[{self.current_task_index + 1}/{len(self.task_queue)}] {info.file_name} → {os.path.basename(output_path)}"
-        )
-        self.progress_frame.reset()
+        self.active_tasks[fid] = task
+        engine = FFmpegEngine()
+        self.engines[fid] = engine
 
-        # 更新所有文件状态
-        for i, qfid in enumerate(self.task_queue):
-            if i < self.current_task_index:
-                self.file_list.update_status(qfid, "✓ 完成", DARK_THEME["success"])
-            elif i > self.current_task_index:
-                self.file_list.update_status(qfid, "等待中", DARK_THEME["warning"])
-
-        # 重置进度停滞检测
-        import time as _time
-        self._last_progress_time = _time.time()
-        self._last_progress_value = 0.0
-
-        # 启动引擎
-        self.engine.start_task(
+        # 每个任务使用独立 FFmpegEngine，进度消息仍集中回到主线程更新界面。
+        engine.start_task(
             task, options,
             total_duration=info.duration,
             source_height=info.video_height,
@@ -824,7 +856,7 @@ class VideoCompressorApp:
             on_error=lambda t: self.msg_queue.put(("error", t)),
         )
 
-    def _build_options(self) -> CompressOptions:
+    def _build_options(self, file_id: int = None) -> CompressOptions:
         """从UI构建压缩选项"""
         # 解析编码器
         encoder_val = self.encoder_var.get()
@@ -846,15 +878,20 @@ class VideoCompressorApp:
         # 字幕选项
         subtitle_mode = "none"
         subtitle_stream_index = -1
+        subtitle_stream_ordinal = -1
+        subtitle_codec = ""
         external_sub_path = ""
         mode_str = self.subtitle_mode_var.get()
-        if mode_str == "内置字幕":
-            subtitle_mode = "embedded"
-            if hasattr(self, '_subtitle_streams_data') and self._subtitle_streams_data:
-                idx = self.subtitle_stream_combo.current()
-                if idx >= 0 and idx < len(self._subtitle_streams_data):
-                    subtitle_stream_index = self._subtitle_streams_data[idx][1]
-        elif mode_str == "外挂字幕":
+        if mode_str == "内置字幕（烧录）":
+            selected_subtitle = self._get_embedded_subtitle_for_file(file_id)
+            if selected_subtitle:
+                subtitle_mode = "embedded"
+                subtitle_stream_index = selected_subtitle.index
+                subtitle_stream_ordinal = selected_subtitle.ordinal
+                subtitle_codec = selected_subtitle.codec
+            else:
+                logger.info("文件没有可烧录的内置字幕: %s", file_id)
+        elif mode_str == "外挂字幕（烧录）":
             subtitle_mode = "external"
             external_sub_path = getattr(self, '_external_subtitle_path', '')
 
@@ -870,27 +907,72 @@ class VideoCompressorApp:
             platform_compatibility=self.platform_compatibility_var.get(),
             subtitle_mode=subtitle_mode,
             subtitle_stream_index=subtitle_stream_index,
+            subtitle_stream_ordinal=subtitle_stream_ordinal,
+            subtitle_codec=subtitle_codec,
             external_subtitle_path=external_sub_path,
             subtitle_font_size=self._safe_int(self.sub_font_size_var.get(), 24),
             subtitle_font_color="#FFFFFF",
             gpu_encoder=gpu_encoder,
         )
 
+    def _get_embedded_subtitle_for_file(self, file_id: int):
+        """获取一个文件应烧录的内置字幕：指定条目优先，否则默认条目优先。"""
+        info = self.file_info.get(file_id)
+        if not info or not info.subtitle_streams:
+            return None
+
+        selected_file_id = None
+        selected_stream_index = None
+        if hasattr(self, '_subtitle_streams_data') and self._subtitle_streams_data:
+            selected_index = self.subtitle_stream_combo.current()
+            if 0 <= selected_index < len(self._subtitle_streams_data):
+                selected_file_id, selected_stream_index, _ = self._subtitle_streams_data[selected_index]
+
+        if selected_file_id == file_id and selected_stream_index is not None:
+            for stream in info.subtitle_streams:
+                if stream.index == selected_stream_index:
+                    return stream
+
+        return next((stream for stream in info.subtitle_streams if stream.default), info.subtitle_streams[0])
+
+    def _has_running_tasks(self) -> bool:
+        """检查是否仍有实际运行中的 FFmpeg 进程。"""
+        return any(engine.is_running() for engine in self.engines.values())
+
+    def _refresh_task_summary(self):
+        """刷新并行批处理摘要。"""
+        active_count = len(self.task_pool.active)
+        pending_count = len(self.task_pool.pending)
+        total = len(self.task_queue)
+        if active_count:
+            self.task_info_label.config(
+                text=(f"同时压缩 {active_count}/{self.task_pool.max_parallel_tasks} 个 | "
+                      f"等待 {pending_count} 个 | 共 {total} 个")
+            )
+
     def _cancel_compression(self):
-        """取消压缩"""
-        if self.engine.is_running():
-            self.engine.cancel()
-            self.task_info_label.config(text="已取消")
-            self.status_bar.config(text="用户取消了压缩任务")
+        """取消等待和运行中的所有任务。"""
+        if not self.task_pool.has_work() and not self._has_running_tasks():
+            return
+
+        self._cancel_requested = True
+        pending_ids = list(self.task_pool.pending)
+        active_ids = self.task_pool.cancel()
+        for fid in pending_ids:
+            self.file_list.update_status(fid, "已取消", DARK_THEME["text_muted"])
+        for fid in active_ids:
+            self.file_list.update_status(fid, "取消中", DARK_THEME["text_muted"])
+            engine = self.engines.get(fid)
+            if engine:
+                engine.cancel()
+        self.active_tasks.clear()
+        self.task_info_label.config(text="已取消本批压缩")
+        self.status_bar.config(text="用户取消了等待和运行中的压缩任务")
 
     def _all_tasks_complete(self):
         """所有任务完成"""
         self.task_info_label.config(text="✓ 所有任务已完成！")
         self.status_bar.config(text="所有压缩任务已完成")
-
-        # 更新最后一个状态
-        for fid in self.task_queue:
-            self.file_list.update_status(fid, "✓ 完成", DARK_THEME["success"])
 
         # 完成后操作
         action = self.after_complete_var.get()
@@ -934,25 +1016,20 @@ class VideoCompressorApp:
 
                 elif msg_type == "progress":
                     task = data
-                    self.progress_frame.update_progress(task)
-                    import time as _time
-                    now = _time.time()
-                    # 记录进度值最后变化的时间
-                    if abs(task.progress - self._last_progress_value) > 0.01:
-                        self._last_progress_value = task.progress
-                        self._last_progress_time = now
-
-                    # 如果进度>=99%且超过15秒进度值没有变化，检查输出文件是否已生成
-                    if task.progress >= 99.0 and (now - self._last_progress_time) > 15:
-                        if os.path.exists(task.output_file):
-                            # 文件已存在，FFmpeg可能卡在最终封装阶段
-                            task.progress = 100.0
-                            task.status = TaskStatus.COMPLETED
-                            task.output_size = os.path.getsize(task.output_file)
-                            self.msg_queue.put(("complete", task))
+                    if task.task_id in self.active_tasks:
+                        # 进度条显示最近更新的一个任务；文件列表同时标出全部运行任务。
+                        self.progress_frame.update_progress(task)
+                        self.status_bar.config(
+                            text=(f"压缩中: {os.path.basename(task.input_file)} "
+                                  f"{task.progress:.1f}% | "
+                                  f"并行 {len(self.task_pool.active)}/{self.task_pool.max_parallel_tasks}")
+                        )
 
                 elif msg_type == "complete":
                     task = data
+                    self.task_pool.finish(task.task_id)
+                    self.active_tasks.pop(task.task_id, None)
+                    self.engines.pop(task.task_id, None)
                     self.progress_frame.update_progress(task)
                     self.file_list.update_status(task.task_id, "✓ 完成", DARK_THEME["success"])
 
@@ -970,20 +1047,27 @@ class VideoCompressorApp:
                     self.status_bar.config(
                         text=f"✓ 完成: {os.path.basename(task.output_file)}{size_info}{fallback_info}"
                     )
-
-                    # 处理下一个
-                    self.current_task_index += 1
-                    self.root.after(500, self._process_next_task)
+                    if not self._cancel_requested:
+                        self._start_available_tasks()
+                        if self.task_pool.is_idle:
+                            self._all_tasks_complete()
+                    else:
+                        self._refresh_task_summary()
 
                 elif msg_type == "error":
                     task = data
+                    self.task_pool.finish(task.task_id)
+                    self.active_tasks.pop(task.task_id, None)
+                    self.engines.pop(task.task_id, None)
                     self.file_list.update_status(task.task_id, "✗ 失败", DARK_THEME["error"])
                     self.task_info_label.config(text=f"错误: {task.error_message[:100]}")
                     self.status_bar.config(text=f"压缩失败: {task.error_message[:80]}")
-
-                    # 尝试下一个
-                    self.current_task_index += 1
-                    self.root.after(500, self._process_next_task)
+                    if not self._cancel_requested:
+                        self._start_available_tasks()
+                        if self.task_pool.is_idle:
+                            self._all_tasks_complete()
+                    else:
+                        self._refresh_task_summary()
 
                 elif msg_type == "drop_files":
                     # 处理拖拽进来的文件
@@ -1031,8 +1115,8 @@ class VideoCompressorApp:
         self._closing = True
 
         # 如果有正在运行的任务，先取消
-        if self.engine.is_running():
-            self.engine.cancel()
+        if self.task_pool.has_work() or self._has_running_tasks():
+            self._cancel_compression()
 
         # 保存设置
         try:

@@ -130,6 +130,7 @@ def get_default_settings():
         "subtitle_font_color": "#FFFFFF",
         "remove_audio": False,
         "platform_compatibility": True,
+        "parallel_tasks": 3,
         "output_dir": "",
         "filename_suffix": "_720p",
         "after_complete": "无操作",

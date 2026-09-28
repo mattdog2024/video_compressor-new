@@ -13,7 +13,8 @@ from utils.helpers import (
     get_ffmpeg_path, RESOLUTION_MAP, QUALITY_PRESETS
 )
 from core.subtitle import (
-    extract_subtitle, build_subtitle_filter, get_subtitle_filter_for_external
+    build_embedded_subtitle_filter, build_subtitle_filter,
+    get_subtitle_filter_for_external, is_bitmap_subtitle_codec,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,6 +60,8 @@ class CompressOptions:
     remove_audio: bool = False
     subtitle_mode: str = "none"  # none / embedded / external
     subtitle_stream_index: int = -1
+    subtitle_stream_ordinal: int = -1
+    subtitle_codec: str = ""
     external_subtitle_path: str = ""
     subtitle_font_size: int = 24
     subtitle_font_color: str = "#FFFFFF"
@@ -116,12 +119,18 @@ class FFmpegEngine:
                 vf_parts.append(f"scale=-2:{height}")
 
         # 字幕滤镜
+        bitmap_subtitle_ordinal = -1
         if options.subtitle_mode == "embedded" and options.subtitle_stream_index >= 0:
-            # 提取内置字幕
-            sub_file = extract_subtitle(task.input_file, options.subtitle_stream_index)
-            if sub_file:
-                vf_parts.append(build_subtitle_filter(
-                    sub_file, options.subtitle_font_size, options.subtitle_font_color
+            # 文本字幕直接从原视频容器读取，避免临时转 SRT 造成失败或乱码。
+            # PGS/VobSub 等图片字幕必须由滤镜图叠加，不能转成文本字幕。
+            if is_bitmap_subtitle_codec(options.subtitle_codec):
+                bitmap_subtitle_ordinal = options.subtitle_stream_ordinal
+            elif options.subtitle_stream_ordinal >= 0:
+                vf_parts.append(build_embedded_subtitle_filter(
+                    task.input_file,
+                    options.subtitle_stream_ordinal,
+                    options.subtitle_font_size,
+                    options.subtitle_font_color,
                 ))
         elif options.subtitle_mode == "external" and options.external_subtitle_path:
             sub_filter = get_subtitle_filter_for_external(
@@ -136,8 +145,22 @@ class FFmpegEngine:
         if options.platform_compatibility:
             encoder_name = self._get_platform_compatible_encoder(encoder_name)
 
-        if vf_parts:
-            cmd.extend(["-vf", ",".join(vf_parts)])
+        if bitmap_subtitle_ordinal >= 0:
+            # 图片字幕与原视频先叠加，再缩放，位置和字号会随视频等比例缩放。
+            video_chain = "[0:v:0]" + ("," + ",".join(vf_parts) if vf_parts else "null")
+            filter_complex = (
+                f"{video_chain}[vbase];"
+                f"[vbase][0:s:{bitmap_subtitle_ordinal}]"
+                "overlay=0:0:eof_action=pass:repeatlast=0[vout]"
+            )
+            cmd.extend(["-filter_complex", filter_complex, "-map", "[vout]"])
+        else:
+            if vf_parts:
+                cmd.extend(["-vf", ",".join(vf_parts)])
+            cmd.extend(["-map", "0:v:0"])
+
+        # 明确只保留首条音频，避免内置字幕烧录后又把字幕流写进 MP4。
+        cmd.extend(["-map", "0:a:0?"])
 
         # 编码器参数
         quality_config = QUALITY_PRESETS.get(options.quality, QUALITY_PRESETS["标准"])
@@ -478,16 +501,18 @@ class FFmpegEngine:
 
     @staticmethod
     def generate_output_path(input_file: str, output_dir: str = "",
-                             suffix: str = "_720p") -> str:
-        """生成输出文件路径"""
+                             suffix: str = "_720p",
+                             reserved_paths: set = None) -> str:
+        """生成输出文件路径，并避开本批并行任务已预留的文件名。"""
         dir_name = output_dir or os.path.dirname(input_file)
         base_name = os.path.splitext(os.path.basename(input_file))[0]
         output_name = f"{base_name}{suffix}.mp4"
         output_path = os.path.join(dir_name, output_name)
+        reserved_paths = reserved_paths or set()
 
         # 避免重名
         counter = 1
-        while os.path.exists(output_path):
+        while os.path.exists(output_path) or output_path in reserved_paths:
             output_name = f"{base_name}{suffix}_{counter}.mp4"
             output_path = os.path.join(dir_name, output_name)
             counter += 1

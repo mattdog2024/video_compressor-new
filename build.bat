@@ -27,13 +27,13 @@ echo [2/4] Checking FFmpeg...
 if not exist "assets\ffmpeg\ffmpeg.exe" (
     echo.
     echo [INFO] FFmpeg not found. Downloading...
-    echo Download from: https://www.gyan.dev/ffmpeg/builds/
+    echo Downloading FFmpeg 7.1.1 compatible with older NVIDIA drivers.
     echo Extract and copy ffmpeg.exe and ffprobe.exe to assets\ffmpeg\
     echo.
 
     REM Try auto download
     echo Trying auto download...
-    powershell -Command "$ProgressPreference='SilentlyContinue'; $url='https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'; $out='ffmpeg_temp.zip'; try { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing; Expand-Archive -Path $out -DestinationPath 'ffmpeg_temp' -Force; Copy-Item 'ffmpeg_temp\*\bin\ffmpeg.exe' 'assets\ffmpeg\' -Force; Copy-Item 'ffmpeg_temp\*\bin\ffprobe.exe' 'assets\ffmpeg\' -Force; Remove-Item 'ffmpeg_temp' -Recurse -Force; Remove-Item $out -Force; Write-Host 'FFmpeg downloaded!' } catch { Write-Host 'Auto download failed. Please download manually.' }"
+    powershell -Command "$ProgressPreference='SilentlyContinue'; $url='https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-essentials_build.zip'; $out='ffmpeg_temp.zip'; try { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing; Expand-Archive -Path $out -DestinationPath 'ffmpeg_temp' -Force; Copy-Item 'ffmpeg_temp\*\bin\ffmpeg.exe' 'assets\ffmpeg\' -Force; Copy-Item 'ffmpeg_temp\*\bin\ffprobe.exe' 'assets\ffmpeg\' -Force; Remove-Item 'ffmpeg_temp' -Recurse -Force; Remove-Item $out -Force; Write-Host 'FFmpeg downloaded!' } catch { Write-Host 'Auto download failed. Please download manually.' }"
 )
 
 if not exist "assets\ffmpeg\ffmpeg.exe" (

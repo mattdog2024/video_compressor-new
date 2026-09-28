@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class SubtitleStream:
     """字幕流信息"""
     index: int
+    ordinal: int
     codec: str
     language: str
     title: str
@@ -152,6 +153,7 @@ def _parse_probe_data(data: dict, file_path: str, file_name: str, file_size: int
     )
 
     # 解析流信息
+    subtitle_ordinal = 0
     for stream in streams:
         codec_type = stream.get("codec_type", "")
 
@@ -194,12 +196,14 @@ def _parse_probe_data(data: dict, file_path: str, file_name: str, file_size: int
         elif codec_type == "subtitle":
             sub = SubtitleStream(
                 index=stream.get("index", 0),
+                ordinal=subtitle_ordinal,
                 codec=stream.get("codec_name", ""),
                 language=stream.get("tags", {}).get("language", ""),
                 title=stream.get("tags", {}).get("title", ""),
                 default=stream.get("disposition", {}).get("default", 0) == 1,
             )
             info.subtitle_streams.append(sub)
+            subtitle_ordinal += 1
 
     info.has_audio = len(info.audio_streams) > 0
     info.has_subtitle = len(info.subtitle_streams) > 0

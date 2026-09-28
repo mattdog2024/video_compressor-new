@@ -9,6 +9,12 @@ from utils.helpers import get_ffmpeg_path
 
 logger = logging.getLogger(__name__)
 
+# 文本字幕可交给 libass 的 subtitles 滤镜直接从容器中读取；图片字幕必须
+# 解码为图像后再叠到视频上，不能错误地转为 SRT。
+BITMAP_SUBTITLE_CODECS = frozenset({
+    "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub",
+})
+
 
 def extract_subtitle(input_file: str, stream_index: int, output_dir: str = None) -> Optional[str]:
     """从视频中提取字幕流为SRT文件"""
@@ -82,13 +88,24 @@ def convert_subtitle_to_srt(input_file: str, output_dir: str = None) -> Optional
         return None
 
 
+def is_bitmap_subtitle_codec(codec: str) -> bool:
+    """判断内置字幕是否是需要图像叠加的位图字幕。"""
+    return (codec or "").lower() in BITMAP_SUBTITLE_CODECS
+
+
+def _escape_filter_path(path: str) -> str:
+    """转义 FFmpeg filter 中的文件路径，兼容 Windows 盘符和中文路径。"""
+    return path.replace("\\", "/").replace("'", r"\'").replace(":", r"\:")
+
+
 def build_subtitle_filter(subtitle_path: str, font_size: int = 24,
                           font_color: str = "white",
                           outline_color: str = "black",
-                          margin_v: int = 30) -> str:
+                          margin_v: int = 30,
+                          stream_ordinal: int = -1) -> str:
     """构建字幕烧录的video filter字符串"""
     # 处理路径中的特殊字符（Windows路径反斜杠和冒号需要转义）
-    escaped_path = subtitle_path.replace("\\", "/").replace(":", "\\:")
+    escaped_path = _escape_filter_path(subtitle_path)
 
     # 构建force_style
     style_parts = [
@@ -100,7 +117,23 @@ def build_subtitle_filter(subtitle_path: str, font_size: int = 24,
     ]
     force_style = ",".join(style_parts)
 
-    return f"subtitles='{escaped_path}':force_style='{force_style}'"
+    filter_parts = [f"filename='{escaped_path}'"]
+    if stream_ordinal >= 0:
+        filter_parts.append(f"si={stream_ordinal}")
+    filter_parts.append(f"force_style='{force_style}'")
+    return "subtitles=" + ":".join(filter_parts)
+
+
+def build_embedded_subtitle_filter(video_path: str, stream_ordinal: int,
+                                   font_size: int = 24,
+                                   font_color: str = "#FFFFFF") -> str:
+    """构建文本内置字幕的直接烧录滤镜，不经过临时 SRT 文件。"""
+    return build_subtitle_filter(
+        video_path,
+        font_size=font_size,
+        font_color=font_color,
+        stream_ordinal=stream_ordinal,
+    )
 
 
 def font_color_to_bgr(hex_color: str) -> str:
