@@ -32,7 +32,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.4")
+        self.root.title("万能视频压缩器 v1.0.5")
         self.root.geometry("820x900")
         self.root.minsize(750, 800)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -618,6 +618,7 @@ class VideoCompressorApp:
             self.sub_font_size_var.set(str(s.get("subtitle_font_size", 24)))
         except (ValueError, TypeError):
             self.sub_font_size_var.set("24")
+        self._on_subtitle_mode_change()
 
     def _save_settings_from_ui(self):
         """从UI保存设置"""
@@ -686,10 +687,12 @@ class VideoCompressorApp:
         self.status_bar.config(
             text=f"已添加: {info.file_name} ({info.resolution_str}, {info.file_size_str})"
         )
+        if self.subtitle_mode_var.get() == "内置字幕（烧录）":
+            self._update_subtitle_streams()
 
     def _clear_file_list(self):
         """清空文件列表"""
-        if self.task_pool.has_work() or self._has_running_tasks():
+        if self.task_pool.has_work or self._has_running_tasks():
             messagebox.showinfo("提示", "请先停止当前压缩任务")
             return
         self.file_list.clear()
@@ -697,6 +700,7 @@ class VideoCompressorApp:
         self.file_info.clear()
         self.task_queue.clear()
         self.task_pool.reset([])
+        self._reserved_output_paths.clear()
         self.file_counter = 0
         self.current_task_index = 0
         self.progress_frame.reset()
@@ -785,7 +789,7 @@ class VideoCompressorApp:
 
     def _start_compression(self):
         """开始压缩"""
-        if self.task_pool.has_work() or self._has_running_tasks():
+        if self.task_pool.has_work or self._has_running_tasks():
             messagebox.showinfo("提示", "已有任务正在运行")
             return
 
@@ -952,7 +956,7 @@ class VideoCompressorApp:
 
     def _cancel_compression(self):
         """取消等待和运行中的所有任务。"""
-        if not self.task_pool.has_work() and not self._has_running_tasks():
+        if not self.task_pool.has_work and not self._has_running_tasks():
             return
 
         self._cancel_requested = True
@@ -1115,7 +1119,7 @@ class VideoCompressorApp:
         self._closing = True
 
         # 如果有正在运行的任务，先取消
-        if self.task_pool.has_work() or self._has_running_tasks():
+        if self.task_pool.has_work or self._has_running_tasks():
             self._cancel_compression()
 
         # 保存设置
