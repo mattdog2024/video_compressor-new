@@ -90,6 +90,16 @@ class FFmpegEngine:
         """构建FFmpeg命令"""
         cmd = [get_ffmpeg_path()]
 
+        # PGS/VobSub 是带坐标的图片字幕。修复没有明确结束时间的字幕包，
+        # 否则 FFmpeg 会把它当成一瞬间的空图层，表现为“压完没有字幕”。
+        is_bitmap_embedded = (
+            options.subtitle_mode == "embedded"
+            and options.subtitle_stream_ordinal >= 0
+            and is_bitmap_subtitle_codec(options.subtitle_codec)
+        )
+        if is_bitmap_embedded:
+            cmd.append("-fix_sub_duration")
+
         # 跳过开头
         if options.skip_start > 0:
             cmd.extend(["-ss", str(options.skip_start)])
@@ -146,12 +156,18 @@ class FFmpegEngine:
             encoder_name = self._get_platform_compatible_encoder(encoder_name)
 
         if bitmap_subtitle_ordinal >= 0:
-            # 图片字幕与原视频先叠加，再缩放，位置和字号会随视频等比例缩放。
-            video_chain = "[0:v:0]" + ("," + ",".join(vf_parts) if vf_parts else "null")
+            # 图片字幕的画布尺寸常和视频不一致（例如 1280x720 PGS 配 720x480
+            # 视频）。先按原视频画布缩放图片字幕并叠加，最后才缩放视频；否则字幕
+            # 的原始坐标会落到输出画面之外，看起来像“没有字幕”。
+            video_filters = ",".join(vf_parts) if vf_parts else "null"
             filter_complex = (
-                f"{video_chain}[vbase];"
-                f"[vbase][0:s:{bitmap_subtitle_ordinal}]"
-                "overlay=0:0:eof_action=pass:repeatlast=0[vout]"
+                "[0:v:0]setpts=PTS-STARTPTS[vsrc];"
+                f"[0:s:{bitmap_subtitle_ordinal}]setpts=PTS-STARTPTS[ssrc];"
+                "[ssrc][vsrc]scale2ref[subs][vbase];"
+                # 图片字幕通常只在开始和清除时各给一帧，必须保留开始帧到下一张
+                # 透明清除帧，否则用户会看到“压制成功但字幕一闪而过/完全没显示”。
+                "[vbase][subs]overlay=0:0:eof_action=pass:repeatlast=1[burned];"
+                f"[burned]{video_filters}[vout]"
             )
             cmd.extend(["-filter_complex", filter_complex, "-map", "[vout]"])
         else:

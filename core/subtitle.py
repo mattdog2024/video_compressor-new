@@ -16,6 +16,37 @@ BITMAP_SUBTITLE_CODECS = frozenset({
 })
 
 
+def subtitle_kind_label(codec: str) -> str:
+    """返回给界面显示的字幕类型，避免用户只看到难懂的编码名。"""
+    normalized = (codec or "").lower()
+    if normalized == "hdmv_pgs_subtitle":
+        return "PGS 图片字幕"
+    if normalized in {"dvd_subtitle", "dvb_subtitle", "xsub"}:
+        return "图片字幕"
+    if normalized in {"ass", "ssa"}:
+        return "ASS 样式字幕"
+    if normalized in {"subrip", "srt", "mov_text", "webvtt", "text"}:
+        return "文字字幕"
+    return f"{codec or '未知'} 字幕"
+
+
+def format_subtitle_choice(file_name: str, ordinal: int, stream_index: int,
+                           codec: str, language: str = "", title: str = "",
+                           is_default: bool = False) -> tuple[str, str]:
+    """生成简短下拉项和可换行的完整字幕信息。"""
+    language_label = language or "未标语言"
+    kind = subtitle_kind_label(codec)
+    short_label = f"第{ordinal + 1}条 · {language_label} · {kind}"
+    default_label = "默认字幕" if is_default else "普通字幕"
+    title_label = title or "未标注标题"
+    detail = (
+        f"文件：{file_name}\n"
+        f"字幕：第{ordinal + 1}条（流 #{stream_index}）· {kind} · {language_label} · {default_label}\n"
+        f"完整名称：{title_label}"
+    )
+    return short_label, detail
+
+
 def extract_subtitle(input_file: str, stream_index: int, output_dir: str = None) -> Optional[str]:
     """从视频中提取字幕流为SRT文件"""
     if output_dir is None:

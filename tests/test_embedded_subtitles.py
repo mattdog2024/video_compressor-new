@@ -68,8 +68,11 @@ class EmbeddedSubtitleCommandTests(unittest.TestCase):
             source_height=480,
         )
         filter_complex = self.option_value(command, "-filter_complex")
+        self.assertIn("-fix_sub_duration", command)
         self.assertIn("[0:s:1]", filter_complex)
-        self.assertIn("overlay=0:0", filter_complex)
+        self.assertIn("scale2ref[subs][vbase]", filter_complex)
+        self.assertIn("overlay=0:0:eof_action=pass:repeatlast=1", filter_complex)
+        self.assertIn("[burned]scale=", filter_complex)
         map_positions = [index for index, value in enumerate(command) if value == "-map"]
         self.assertEqual(command[map_positions[0] + 1], "[vout]")
         self.assertEqual(command[map_positions[1] + 1], "0:a:0?")

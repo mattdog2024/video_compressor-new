@@ -17,6 +17,7 @@ from core.ffmpeg_engine import (
     FFmpegEngine, CompressTask, CompressOptions, TaskStatus
 )
 from core.task_pool import TaskPool
+from core.subtitle import format_subtitle_choice
 from utils.helpers import (
     format_file_size, format_duration, format_time_remaining,
     load_settings, save_settings, get_default_settings,
@@ -32,7 +33,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.5")
+        self.root.title("万能视频压缩器 v1.0.6")
         self.root.geometry("820x900")
         self.root.minsize(750, 800)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -355,14 +356,21 @@ class VideoCompressorApp:
         self.subtitle_mode_combo.pack(side="left", padx=(5, 10))
         self.subtitle_mode_combo.bind("<<ComboboxSelected>>", self._on_subtitle_mode_change)
 
-        # 字幕流选择（内置字幕时显示）
+        # 字幕流选择（内置字幕时显示）。完整信息独立占一行，避免长片名/字幕名被截断。
+        self.subtitle_selection_frame = tk.Frame(adv_section, bg=DARK_THEME["surface"])
+        self._create_label(self.subtitle_selection_frame, "选择内置字幕:").pack(side="left")
         self.subtitle_stream_var = tk.StringVar(value="")
         self.subtitle_stream_combo = ttk.Combobox(
-            sub_row, textvariable=self.subtitle_stream_var,
-            state="readonly", width=20
+            self.subtitle_selection_frame, textvariable=self.subtitle_stream_var,
+            state="readonly", width=32
         )
-        # 默认隐藏
-        # self.subtitle_stream_combo.pack(side="left", padx=(0, 10))
+        self.subtitle_stream_combo.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        self.subtitle_stream_combo.bind("<<ComboboxSelected>>", self._on_subtitle_stream_selected)
+
+        self.subtitle_detail_label = tk.Label(
+            adv_section, text="", bg=DARK_THEME["surface"], fg=DARK_THEME["text_muted"],
+            font=FONTS["small"], anchor="w", justify="left", wraplength=730
+        )
 
         # 外挂字幕选择
         self.btn_load_sub = StyledButton(
@@ -739,42 +747,57 @@ class VideoCompressorApp:
         mode = self.subtitle_mode_var.get()
 
         # 隐藏所有字幕相关控件
-        self.subtitle_stream_combo.pack_forget()
+        self.subtitle_selection_frame.pack_forget()
+        self.subtitle_detail_label.pack_forget()
         self.btn_load_sub.pack_forget()
         self.subtitle_file_label.pack_forget()
 
         if mode == "内置字幕（烧录）":
             # 显示字幕流选择
             self._update_subtitle_streams()
-            self.subtitle_stream_combo.pack(side="left", padx=(0, 10))
+            self.subtitle_selection_frame.pack(fill="x", padx=15, pady=(0, 2))
+            self.subtitle_detail_label.pack(fill="x", padx=15, pady=(0, 8))
         elif mode == "外挂字幕（烧录）":
             self.btn_load_sub.pack(side="left", padx=(0, 10))
             self.subtitle_file_label.pack(side="left")
 
     def _update_subtitle_streams(self):
         """更新内置字幕流列表"""
-        streams = [(None, None, "自动：每个视频默认字幕（没有默认则第一条）")]
+        streams = [(
+            None, None,
+            "自动选择（默认字幕 / 第一条）",
+            "每个视频优先烧录标记为“默认”的字幕；没有默认字幕时烧录第一条。",
+        )]
         for fid, info in self.file_info.items():
             if info.has_subtitle:
                 for sub in info.subtitle_streams:
-                    lang = sub.language or "未知"
-                    title = f" - {sub.title}" if sub.title else ""
-                    default_mark = " 默认" if sub.default else ""
-                    label = (
-                        f"{info.file_name}: 第{sub.ordinal + 1}条 [{sub.index}] "
-                        f"{sub.codec} ({lang}{title}{default_mark})"
+                    short_label, detail = format_subtitle_choice(
+                        info.file_name, sub.ordinal, sub.index, sub.codec,
+                        sub.language, sub.title, sub.default,
                     )
-                    streams.append((fid, sub.index, label))
+                    streams.append((fid, sub.index, short_label, detail))
 
         if len(streams) > 1:
             labels = [s[2] for s in streams]
             self.subtitle_stream_combo["values"] = labels
             self.subtitle_stream_combo.current(0)
             self._subtitle_streams_data = streams
+            self._update_subtitle_detail()
         else:
             self.subtitle_stream_combo["values"] = ["未检测到内置字幕"]
             self.subtitle_stream_combo.current(0)
             self._subtitle_streams_data = []
+            self.subtitle_detail_label.config(text="当前文件没有可烧录的内置字幕。")
+
+    def _on_subtitle_stream_selected(self, event=None):
+        """切换内置字幕时显示完整文件名和字幕标题。"""
+        self._update_subtitle_detail()
+
+    def _update_subtitle_detail(self):
+        """显示选中字幕的完整信息，不让长名称被下拉框裁掉。"""
+        selected_index = self.subtitle_stream_combo.current()
+        if 0 <= selected_index < len(getattr(self, "_subtitle_streams_data", [])):
+            self.subtitle_detail_label.config(text=self._subtitle_streams_data[selected_index][3])
 
     def _load_external_subtitle(self):
         """加载外挂字幕文件"""
@@ -930,7 +953,7 @@ class VideoCompressorApp:
         if hasattr(self, '_subtitle_streams_data') and self._subtitle_streams_data:
             selected_index = self.subtitle_stream_combo.current()
             if 0 <= selected_index < len(self._subtitle_streams_data):
-                selected_file_id, selected_stream_index, _ = self._subtitle_streams_data[selected_index]
+                selected_file_id, selected_stream_index, _, _ = self._subtitle_streams_data[selected_index]
 
         if selected_file_id == file_id and selected_stream_index is not None:
             for stream in info.subtitle_streams:
