@@ -5,6 +5,8 @@ import subprocess
 import threading
 import time
 import logging
+import shutil
+import tempfile
 from dataclasses import dataclass, field, replace
 from typing import Optional, Callable, List
 from enum import Enum
@@ -15,6 +17,7 @@ from utils.helpers import (
 from core.subtitle import (
     build_embedded_subtitle_filter, build_subtitle_filter,
     get_subtitle_filter_for_external, is_bitmap_subtitle_codec,
+    prepare_clean_embedded_text_subtitle,
 )
 
 logger = logging.getLogger(__name__)
@@ -83,6 +86,7 @@ class FFmpegEngine:
         self._on_error: Optional[Callable] = None
         self._current_task: Optional[CompressTask] = None
         self._start_time: float = 0
+        self._temporary_subtitle_dirs: List[str] = []
 
     def build_command(self, task: CompressTask, options: CompressOptions,
                       total_duration: float = 0,
@@ -299,17 +303,51 @@ class FFmpegEngine:
         self._on_error = on_error
         self._start_time = time.time()
 
-        cmd = self.build_command(task, options, total_duration, source_height=source_height)
+        prepared_options = self._prepare_text_subtitle_options(task, options)
+        cmd = self.build_command(task, prepared_options, total_duration, source_height=source_height)
         logger.info(f"FFmpeg命令: {' '.join(cmd)}")
 
         task.status = TaskStatus.RUNNING
 
         self._thread = threading.Thread(
             target=self._run_process,
-            args=(cmd, task, total_duration, options, source_height),
+            args=(cmd, task, total_duration, prepared_options, source_height),
             daemon=True
         )
         self._thread.start()
+
+    def _prepare_text_subtitle_options(self, task: CompressTask,
+                                       options: CompressOptions) -> CompressOptions:
+        """把内置文字字幕变成干净 SRT，禁止原片样式把文字烧糊。"""
+        if (
+            options.subtitle_mode != "embedded"
+            or options.subtitle_stream_index < 0
+            or is_bitmap_subtitle_codec(options.subtitle_codec)
+        ):
+            return options
+
+        temp_dir = tempfile.mkdtemp(prefix="video_compressor_subtitle_")
+        clean_subtitle = prepare_clean_embedded_text_subtitle(
+            task.input_file, options.subtitle_stream_index, temp_dir,
+        )
+        if not clean_subtitle:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            logger.warning("无法标准化内置文字字幕，保留原始字幕烧录路径")
+            return options
+
+        self._temporary_subtitle_dirs.append(temp_dir)
+        logger.info("内置文字字幕已标准化: %s", clean_subtitle)
+        return replace(
+            options,
+            subtitle_mode="external",
+            external_subtitle_path=clean_subtitle,
+        )
+
+    def _cleanup_temporary_subtitles(self):
+        """删除本任务生成的临时标准字幕。"""
+        for directory in self._temporary_subtitle_dirs:
+            shutil.rmtree(directory, ignore_errors=True)
+        self._temporary_subtitle_dirs.clear()
 
     def _execute_process(self, cmd: list, task: CompressTask,
                          total_duration: float) -> tuple[int, str]:
@@ -442,6 +480,8 @@ class FFmpegEngine:
             task.error_message = str(e)
             if self._on_error:
                 self._on_error(task)
+        finally:
+            self._cleanup_temporary_subtitles()
 
     def _parse_progress(self, process: subprocess.Popen, task: CompressTask,
                         total_duration: float):

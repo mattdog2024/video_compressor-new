@@ -1,5 +1,6 @@
 """字幕处理模块 - 提取内置字幕、处理外挂字幕"""
 import os
+import re
 import subprocess
 import tempfile
 import logging
@@ -14,6 +15,50 @@ logger = logging.getLogger(__name__)
 BITMAP_SUBTITLE_CODECS = frozenset({
     "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub",
 })
+
+_ASS_OVERRIDE_BLOCK = re.compile(r"\{\\[^}]*\}")
+_HTML_STYLE_TAG = re.compile(r"</?(?:font|b|i|u|s|span)(?:\s+[^>]*)?>", re.IGNORECASE)
+
+
+def clean_text_subtitle_content(content: str) -> str:
+    """清掉 ASS/HTML 样式覆盖，只保留可读文字和时间轴。"""
+    clean = (content or "").replace("\r\n", "\n").replace("\r", "\n")
+    clean = _ASS_OVERRIDE_BLOCK.sub("", clean)
+    clean = _HTML_STYLE_TAG.sub("", clean)
+    clean = clean.replace(r"\N", "\n").replace(r"\n", "\n")
+    # 部分 ASS 转 SRT 时会留下行尾反斜杠；去掉它避免显示成乱码。
+    clean = re.sub(r"\\\n", "\n", clean)
+    return clean
+
+
+def prepare_clean_embedded_text_subtitle(input_file: str, stream_index: int,
+                                         output_dir: str = None) -> Optional[str]:
+    """导出内置文字字幕并剥离原片复杂的字号、模糊、位置等样式。"""
+    if output_dir is None:
+        output_dir = tempfile.mkdtemp(prefix="video_compressor_subtitle_")
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, "clean_embedded_subtitle.srt")
+
+    cmd = [
+        get_ffmpeg_path(), "-y", "-i", input_file,
+        "-map", f"0:{stream_index}", "-c:s", "srt", output_file,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=90,
+            creationflags=subprocess.CREATE_NO_WINDOW if _is_windows() else 0,
+        )
+        if result.returncode != 0 or not os.path.exists(output_file):
+            logger.warning("文字内置字幕标准化失败: %s", result.stderr[-500:])
+            return None
+        with open(output_file, "r", encoding="utf-8-sig") as subtitle_file:
+            clean = clean_text_subtitle_content(subtitle_file.read())
+        with open(output_file, "w", encoding="utf-8") as subtitle_file:
+            subtitle_file.write(clean)
+        return output_file
+    except Exception as exc:
+        logger.warning("文字内置字幕标准化异常: %s", exc)
+        return None
 
 
 def subtitle_kind_label(codec: str) -> str:
@@ -131,7 +176,7 @@ def _escape_filter_path(path: str) -> str:
 
 def build_subtitle_filter(subtitle_path: str, font_size: int = 24,
                           font_color: str = "white",
-                          outline_color: str = "black",
+                          outline_color: str = "#000000",
                           margin_v: int = 30,
                           stream_ordinal: int = -1) -> str:
     """构建字幕烧录的video filter字符串"""
@@ -140,10 +185,14 @@ def build_subtitle_filter(subtitle_path: str, font_size: int = 24,
 
     # 构建force_style
     style_parts = [
+        "FontName=Microsoft YaHei",
         f"FontSize={font_size}",
         f"PrimaryColour=&H00{font_color_to_bgr(font_color)}",
         f"OutlineColour=&H00{font_color_to_bgr(outline_color)}",
-        "Outline=2",
+        "Bold=0",
+        "Outline=1.5",
+        "Shadow=0",
+        "Alignment=2",
         f"MarginV={margin_v}",
     ]
     force_style = ",".join(style_parts)

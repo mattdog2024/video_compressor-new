@@ -33,7 +33,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.7")
+        self.root.title("万能视频压缩器 v1.0.8")
         self.root.geometry("820x980")
         self.root.minsize(750, 820)
         self.root.configure(bg=DARK_THEME["bg"])
