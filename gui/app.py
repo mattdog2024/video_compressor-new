@@ -33,9 +33,9 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.6")
-        self.root.geometry("820x900")
-        self.root.minsize(750, 800)
+        self.root.title("万能视频压缩器 v1.0.7")
+        self.root.geometry("820x980")
+        self.root.minsize(750, 820)
         self.root.configure(bg=DARK_THEME["bg"])
 
         # 确保窗口有原生标题栏和控制按钮（最小化/最大化/关闭）
@@ -426,7 +426,9 @@ class VideoCompressorApp:
 
         # === 控制按钮 ===
         ctrl_frame = tk.Frame(main_frame, bg=DARK_THEME["bg"])
-        ctrl_frame.pack(fill="x")
+        # 字幕详情会动态增加高级设置高度；把操作按钮插在进度区前面，
+        # 窗口高度不足时也一定能看到“开始压缩 / 取消”。
+        ctrl_frame.pack(fill="x", pady=(0, 10), before=progress_section)
 
         self.btn_start = StyledButton(
             ctrl_frame, text="▶ 开始压缩",
