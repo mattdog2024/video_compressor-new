@@ -5,7 +5,7 @@ from core.ffmpeg_engine import CompressOptions, CompressTask, FFmpegEngine
 
 
 class SubtitleSizeAndFastVolumeTests(unittest.TestCase):
-    def test_user_sample_ass_uses_moderate_480p_font_size(self):
+    def test_user_sample_ass_uses_moderate_single_language_480p_font_size(self):
         engine = FFmpegEngine()
         command = engine.build_command(
             CompressTask(1, "sample.mkv", "output.mp4"),
@@ -17,7 +17,7 @@ class SubtitleSizeAndFastVolumeTests(unittest.TestCase):
             source_height=690,
         )
         filter_text = command[command.index("-vf") + 1]
-        self.assertIn("FontSize=30", filter_text)
+        self.assertIn("FontSize=28", filter_text)
         self.assertIn("Outline=2", filter_text)
         self.assertEqual(command[command.index("-b:v") + 1], "400k")
         self.assertEqual(command[command.index("-maxrate") + 1], "480k")

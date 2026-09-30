@@ -17,7 +17,7 @@ from utils.helpers import (
 from core.subtitle import (
     build_embedded_subtitle_filter, build_subtitle_filter,
     get_subtitle_filter_for_external, is_bitmap_subtitle_codec,
-    prepare_clean_embedded_text_subtitle,
+    prepare_clean_embedded_text_subtitle, has_bilingual_subtitles,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,7 @@ class CompressOptions:
     external_subtitle_path: str = ""
     subtitle_font_size: int = 24
     subtitle_font_color: str = "#FFFFFF"
+    subtitle_bilingual: bool = False  # 自动检测到中英双语时减少占屏
     gpu_encoder: str = ""        # 具体GPU编码器名
     platform_compatibility: bool = True  # 主流平台兼容：H.264 8位 + AAC-LC 48k
     extra_args: List[str] = field(default_factory=list)
@@ -134,8 +135,14 @@ class FFmpegEngine:
 
         # 字幕滤镜
         bitmap_subtitle_ordinal = -1
+        subtitle_is_bilingual = options.subtitle_bilingual
+        if options.subtitle_mode == "external" and options.external_subtitle_path:
+            subtitle_is_bilingual = subtitle_is_bilingual or has_bilingual_subtitles(
+                options.external_subtitle_path,
+            )
         text_subtitle_font_size = self._effective_text_subtitle_font_size(
             options.subtitle_font_size, options.resolution, source_height,
+            subtitle_is_bilingual,
         )
         if options.subtitle_mode == "embedded" and options.subtitle_stream_index >= 0:
             # 文本字幕直接从原视频容器读取，避免临时转 SRT 造成失败或乱码。
@@ -305,8 +312,9 @@ class FFmpegEngine:
 
     @staticmethod
     def _effective_text_subtitle_font_size(requested_size: int, resolution: str,
-                                           source_height: int) -> int:
-        """给文字字幕设定随最终输出高度变化的最低可读字号。"""
+                                           source_height: int,
+                                           is_bilingual: bool = False) -> int:
+        """给文字字幕设定随最终输出高度和语种数量变化的最低可读字号。"""
         requested_size = max(1, int(requested_size or 24))
         target_height = RESOLUTION_MAP.get(
             resolution, RESOLUTION_MAP["720p"]
@@ -318,9 +326,10 @@ class FFmpegEngine:
         if effective_height <= 0:
             return requested_size
 
-        # 干净 SRT 已不受原 ASS 的 \fs 样式干扰，42 在 480p 会显得过大。
-        # 改为适中可读尺寸：480p 至少 30、720p 至少 40、1080p 至少 48。
-        readable_minimum = min(48, max(30, round(effective_height * 0.055)))
+        # 干净 SRT 已不受原 ASS 的 \fs 样式干扰。480p 单语使用 28；
+        # 中英双语通常至少两行，使用 26 降低对画面的遮挡。用户主动填更大值优先。
+        single_language_minimum = min(48, max(28, round(effective_height * 0.05)))
+        readable_minimum = max(24, single_language_minimum - 2) if is_bilingual else single_language_minimum
         return max(requested_size, readable_minimum)
 
     @staticmethod
@@ -421,6 +430,7 @@ class FFmpegEngine:
             options,
             subtitle_mode="external",
             external_subtitle_path=clean_subtitle,
+            subtitle_bilingual=has_bilingual_subtitles(clean_subtitle),
         )
 
     def _cleanup_temporary_subtitles(self):

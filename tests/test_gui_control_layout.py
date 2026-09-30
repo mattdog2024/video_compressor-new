@@ -19,7 +19,7 @@ class GuiControlLayoutTests(unittest.TestCase):
         text = source.read_text(encoding="utf-8")
         self.assertIn("self.subtitle_size_hint_label", text)
         self.assertIn("def _refresh_subtitle_size_hint", text)
-        self.assertIn("文字实际≥{text_size}；图片自动×{bitmap_scale:.2f}", text)
+        self.assertIn("单语≥{single_size}；中英双语≥{bilingual_size}；图片自动×{bitmap_scale:.2f}", text)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,8 @@ BITMAP_SUBTITLE_CODECS = frozenset({
 
 _ASS_OVERRIDE_BLOCK = re.compile(r"\{\\[^}]*\}")
 _HTML_STYLE_TAG = re.compile(r"</?(?:font|b|i|u|s|span)(?:\s+[^>]*)?>", re.IGNORECASE)
+_CJK_CHARACTER = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_LATIN_CHARACTER = re.compile(r"[A-Za-z]")
 
 
 def _is_windows() -> bool:
@@ -34,6 +36,18 @@ def clean_text_subtitle_content(content: str) -> str:
     # 部分 ASS 转 SRT 时会留下行尾反斜杠；去掉它避免显示成乱码。
     clean = re.sub(r"\\\n", "\n", clean)
     return clean
+
+
+def has_bilingual_subtitles(subtitle_path: str) -> bool:
+    """判断干净文本字幕是否同时包含中日韩文字和英文，用于控制字幕占屏。"""
+    if not subtitle_path or not os.path.exists(subtitle_path):
+        return False
+    try:
+        with open(subtitle_path, "r", encoding="utf-8-sig", errors="replace") as subtitle_file:
+            content = clean_text_subtitle_content(subtitle_file.read())
+    except OSError:
+        return False
+    return bool(_CJK_CHARACTER.search(content) and _LATIN_CHARACTER.search(content))
 
 
 def prepare_clean_embedded_text_subtitle(input_file: str, stream_index: int,

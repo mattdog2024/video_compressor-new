@@ -19,4 +19,7 @@
 | 推荐下载 | https://github.com/mattdog2024/video_compressor-new/releases/download/v1.0.12/VideoCompressor-v1.0.12-windows-x64.exe | v1.0.12，Windows 内置 ASS 标准化修复版。 |
 | v1.0.12 发布页 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.12 | 正式发布页。 |
 | v1.0.12 构建记录 | https://github.com/mattdog2024/video_compressor-new/actions/runs/36654576727 | 37 项回归测试、Windows 打包和上传均成功。 |
-| 当前计划发布 | GitHub Release `v1.0.13` | 480p 字幕适中大小与极速 NVIDIA 码率上限版。 |
+| 推荐下载 | https://github.com/mattdog2024/video_compressor-new/releases/download/v1.0.13/VideoCompressor-v1.0.13-windows-x64.exe | v1.0.13，480p 字幕适中和极速体积控制版。 |
+| v1.0.13 发布页 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.13 | 正式发布页。 |
+| v1.0.13 构建记录 | https://github.com/mattdog2024/video_compressor-new/actions/runs/36655787889 | 40 项回归测试、Windows 打包和上传均成功。 |
+| 当前计划发布 | GitHub Release `v1.0.14` | 单语与中英双语字幕自动使用不同字号的优化版。 |

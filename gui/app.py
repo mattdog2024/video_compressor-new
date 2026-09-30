@@ -33,7 +33,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.13")
+        self.root.title("万能视频压缩器 v1.0.14")
         self.root.geometry("820x980")
         self.root.minsize(750, 820)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -412,7 +412,7 @@ class VideoCompressorApp:
 
         # 字幕字体
         self._create_label(sub_row, "  字号（文字字幕最小值）:").pack(side="left")
-        self.sub_font_size_var = tk.StringVar(value="30")
+        self.sub_font_size_var = tk.StringVar(value="24")
         self.sub_font_entry = tk.Entry(
             sub_row, textvariable=self.sub_font_size_var,
             bg=DARK_THEME["entry_bg"], fg=DARK_THEME["text"],
@@ -652,9 +652,9 @@ class VideoCompressorApp:
         self.parallel_tasks_var.set(str(max(1, min(3, self._safe_int(s.get("parallel_tasks", 3), 3)))))
 
         try:
-            self.sub_font_size_var.set(str(s.get("subtitle_font_size", 30)))
+            self.sub_font_size_var.set(str(s.get("subtitle_font_size", 24)))
         except (ValueError, TypeError):
-            self.sub_font_size_var.set("30")
+            self.sub_font_size_var.set("24")
         self._refresh_subtitle_size_hint()
         self._on_subtitle_mode_change()
 
@@ -778,14 +778,17 @@ class VideoCompressorApp:
         if target_height <= 0:
             text = "文字使用填写字号；图片保持原大小"
         else:
-            requested = self._safe_int(self.sub_font_size_var.get(), 30)
-            text_size = FFmpegEngine._effective_text_subtitle_font_size(
-                requested, resolution, target_height,
+            requested = self._safe_int(self.sub_font_size_var.get(), 24)
+            single_size = FFmpegEngine._effective_text_subtitle_font_size(
+                requested, resolution, target_height, False,
+            )
+            bilingual_size = FFmpegEngine._effective_text_subtitle_font_size(
+                requested, resolution, target_height, True,
             )
             bitmap_scale = FFmpegEngine._bitmap_subtitle_scale_factor(
                 resolution, target_height,
             )
-            text = f"文字实际≥{text_size}；图片自动×{bitmap_scale:.2f}"
+            text = f"单语≥{single_size}；中英双语≥{bilingual_size}；图片自动×{bitmap_scale:.2f}"
         self.subtitle_size_hint_label.config(text=text)
 
     def _browse_output_dir(self):
