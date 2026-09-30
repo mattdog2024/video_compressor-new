@@ -29,6 +29,25 @@ class TextSubtitleNormalizationTests(unittest.TestCase):
         self.assertIn("Shadow=0", filter_text)
         self.assertIn("Alignment=2", filter_text)
 
+    def test_text_subtitle_font_has_output_based_readable_minimum(self):
+        auto_size = FFmpegEngine._effective_text_subtitle_font_size
+        self.assertEqual(auto_size(24, "480p", 1080), 28)
+        self.assertEqual(auto_size(24, "720p", 1080), 36)
+        self.assertEqual(auto_size(24, "1080p", 1080), 48)
+        self.assertEqual(auto_size(60, "480p", 1080), 60)
+
+    def test_command_uses_auto_text_font_size_for_small_output(self):
+        command = FFmpegEngine().build_command(
+            CompressTask(1, "movie.mkv", "output.mp4"),
+            CompressOptions(
+                resolution="480p", subtitle_mode="external",
+                external_subtitle_path="track.srt", subtitle_font_size=24,
+            ),
+            source_height=1080,
+        )
+        filter_text = command[command.index("-vf") + 1]
+        self.assertIn("FontSize=28", filter_text)
+
     def test_embedded_text_is_replaced_by_clean_external_srt_when_ready(self):
         engine = FFmpegEngine()
         task = CompressTask(1, "input.mkv", "output.mp4")

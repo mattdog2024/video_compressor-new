@@ -33,7 +33,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.9")
+        self.root.title("万能视频压缩器 v1.0.10")
         self.root.geometry("820x980")
         self.root.minsize(750, 820)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -411,7 +411,7 @@ class VideoCompressorApp:
         )
 
         # 字幕字体
-        self._create_label(sub_row, "  字号:").pack(side="left")
+        self._create_label(sub_row, "  字号（文字字幕最小值）:").pack(side="left")
         self.sub_font_size_var = tk.StringVar(value="24")
         self.sub_font_entry = tk.Entry(
             sub_row, textvariable=self.sub_font_size_var,
@@ -423,6 +423,11 @@ class VideoCompressorApp:
             relief="flat"
         )
         self.sub_font_entry.pack(side="left", padx=5)
+        tk.Label(
+            sub_row, text="文字/图片字幕都会自动适应输出大小",
+            bg=DARK_THEME["surface"], fg=DARK_THEME["text_muted"],
+            font=FONTS["small"], anchor="w",
+        ).pack(side="left", padx=(8, 0))
 
         # === 进度区域 ===
         progress_section = tk.LabelFrame(

@@ -134,6 +134,9 @@ class FFmpegEngine:
 
         # 字幕滤镜
         bitmap_subtitle_ordinal = -1
+        text_subtitle_font_size = self._effective_text_subtitle_font_size(
+            options.subtitle_font_size, options.resolution, source_height,
+        )
         if options.subtitle_mode == "embedded" and options.subtitle_stream_index >= 0:
             # 文本字幕直接从原视频容器读取，避免临时转 SRT 造成失败或乱码。
             # PGS/VobSub 等图片字幕必须由滤镜图叠加，不能转成文本字幕。
@@ -143,13 +146,13 @@ class FFmpegEngine:
                 vf_parts.append(build_embedded_subtitle_filter(
                     task.input_file,
                     options.subtitle_stream_ordinal,
-                    options.subtitle_font_size,
+                    text_subtitle_font_size,
                     options.subtitle_font_color,
                 ))
         elif options.subtitle_mode == "external" and options.external_subtitle_path:
             sub_filter = get_subtitle_filter_for_external(
                 options.external_subtitle_path,
-                options.subtitle_font_size,
+                text_subtitle_font_size,
                 options.subtitle_font_color
             )
             vf_parts.append(sub_filter)
@@ -161,16 +164,24 @@ class FFmpegEngine:
 
         if bitmap_subtitle_ordinal >= 0:
             # 图片字幕的画布尺寸常和视频不一致（例如 1280x720 PGS 配 720x480
-            # 视频）。先按原视频画布缩放图片字幕并叠加，最后才缩放视频；否则字幕
-            # 的原始坐标会落到输出画面之外，看起来像“没有字幕”。
+            # 视频）。先按原视频画布缩放图片字幕；当输出为 480p/720p 时，再把
+            # 整张透明字幕画布自动放大并贴底，避免字幕随着视频缩小而小到看不清。
             video_filters = ",".join(vf_parts) if vf_parts else "null"
+            bitmap_scale = self._bitmap_subtitle_scale_factor(
+                options.resolution, source_height,
+            )
             filter_complex = (
                 "[0:v:0]setpts=PTS-STARTPTS[vsrc];"
                 f"[0:s:{bitmap_subtitle_ordinal}]setpts=PTS-STARTPTS[ssrc];"
                 "[ssrc][vsrc]scale2ref[subs][vbase];"
+                # 图片字幕是带透明边的完整画布。放大画布后，靠右下对齐可让字幕
+                # 保持在底部，同时使文字本身随输出分辨率自动变大。
+                f"[subs]scale=trunc(iw*{bitmap_scale:.2f}/2)*2:"
+                f"trunc(ih*{bitmap_scale:.2f}/2)*2:flags=lanczos[autosubs];"
                 # 图片字幕通常只在开始和清除时各给一帧，必须保留开始帧到下一张
                 # 透明清除帧，否则用户会看到“压制成功但字幕一闪而过/完全没显示”。
-                "[vbase][subs]overlay=0:0:eof_action=pass:repeatlast=1[burned];"
+                "[vbase][autosubs]overlay=x=(W-w)/2:y=H-h:"
+                "eof_action=pass:repeatlast=1[burned];"
                 f"[burned]{video_filters}[vout]"
             )
             cmd.extend(["-filter_complex", filter_complex, "-map", "[vout]"])
@@ -263,6 +274,42 @@ class FFmpegEngine:
         cmd.extend(["-y", task.output_file])
 
         return cmd
+
+    @staticmethod
+    def _bitmap_subtitle_scale_factor(resolution: str, source_height: int) -> float:
+        """按实际输出高度放大图片字幕，目标是不低于约 960p 的阅读大小。"""
+        target_height = RESOLUTION_MAP.get(
+            resolution, RESOLUTION_MAP["720p"]
+        )["height"]
+        if target_height > 0:
+            # 本程序不会放大低分辨率视频，字幕应以实际输出高度而非用户选择的
+            # 更高分辨率计算倍率。
+            effective_height = min(source_height, target_height) if source_height > 0 else target_height
+        else:
+            effective_height = source_height
+
+        if effective_height <= 0 or effective_height >= 960:
+            return 1.0
+        return min(2.0, max(1.0, 960.0 / effective_height))
+
+    @staticmethod
+    def _effective_text_subtitle_font_size(requested_size: int, resolution: str,
+                                           source_height: int) -> int:
+        """给文字字幕设定随最终输出高度变化的最低可读字号。"""
+        requested_size = max(1, int(requested_size or 24))
+        target_height = RESOLUTION_MAP.get(
+            resolution, RESOLUTION_MAP["720p"]
+        )["height"]
+        if target_height > 0:
+            effective_height = min(source_height, target_height) if source_height > 0 else target_height
+        else:
+            effective_height = source_height
+        if effective_height <= 0:
+            return requested_size
+
+        # 480p 取 28，720p 约取 36，1080p/更高取 48。
+        readable_minimum = min(48, max(28, round(effective_height * 0.05)))
+        return max(requested_size, readable_minimum)
 
     def _resolve_encoder(self, options: CompressOptions) -> str:
         """解析编码器选择"""
