@@ -13,12 +13,13 @@ class SubtitleLabelTests(unittest.TestCase):
         long_title = "至尊字幕:Marty.Supreme.2025.2160p.WEB-DL.DV.HDR.HEVC"
         short_label, detail = format_subtitle_choice(
             "Marty.Supreme.2025.mkv", 2, 7, "hdmv_pgs_subtitle",
-            "chi", long_title, True,
+            "chi", long_title, True, 1920, 1080,
         )
         self.assertEqual(short_label, "第3条 · chi · PGS 图片字幕")
         self.assertIn("完整名称：" + long_title, detail)
         self.assertIn("流 #7", detail)
         self.assertIn("默认字幕", detail)
+        self.assertIn("画布 1920×1080", detail)
 
 
 if __name__ == "__main__":

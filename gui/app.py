@@ -33,7 +33,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.14")
+        self.root.title("万能视频压缩器 v1.0.15")
         self.root.geometry("820x980")
         self.root.minsize(750, 820)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -788,7 +788,7 @@ class VideoCompressorApp:
             bitmap_scale = FFmpegEngine._bitmap_subtitle_scale_factor(
                 resolution, target_height,
             )
-            text = f"单语≥{single_size}；中英双语≥{bilingual_size}；图片自动×{bitmap_scale:.2f}"
+            text = f"单语≥{single_size}；中英双语≥{bilingual_size}；图片字幕保留原片位置"
         self.subtitle_size_hint_label.config(text=text)
 
     def _browse_output_dir(self):
@@ -867,7 +867,7 @@ class VideoCompressorApp:
         _, auto_detail = format_subtitle_choice(
             info.file_name, default_stream.ordinal, default_stream.index,
             default_stream.codec, default_stream.language, default_stream.title,
-            default_stream.default,
+            default_stream.default, default_stream.width, default_stream.height,
         )
         choices = [
             (None, "自动（默认字幕 / 第一条）", f"自动选择：\n{auto_detail}"),
@@ -875,7 +875,7 @@ class VideoCompressorApp:
         for stream in info.subtitle_streams:
             short_label, detail = format_subtitle_choice(
                 info.file_name, stream.ordinal, stream.index, stream.codec,
-                stream.language, stream.title, stream.default,
+                stream.language, stream.title, stream.default, stream.width, stream.height,
             )
             choices.append((stream.index, short_label, detail))
 
@@ -1053,6 +1053,8 @@ class VideoCompressorApp:
         subtitle_stream_index = -1
         subtitle_stream_ordinal = -1
         subtitle_codec = ""
+        subtitle_canvas_width = 0
+        subtitle_canvas_height = 0
         external_sub_path = ""
         mode_str = self.subtitle_mode_var.get()
         if mode_str == "内置字幕（烧录）":
@@ -1062,6 +1064,8 @@ class VideoCompressorApp:
                 subtitle_stream_index = selected_subtitle.index
                 subtitle_stream_ordinal = selected_subtitle.ordinal
                 subtitle_codec = selected_subtitle.codec
+                subtitle_canvas_width = selected_subtitle.width
+                subtitle_canvas_height = selected_subtitle.height
             else:
                 logger.info("文件没有可烧录的内置字幕: %s", file_id)
         elif mode_str == "外挂字幕（烧录）":
@@ -1082,6 +1086,8 @@ class VideoCompressorApp:
             subtitle_stream_index=subtitle_stream_index,
             subtitle_stream_ordinal=subtitle_stream_ordinal,
             subtitle_codec=subtitle_codec,
+            subtitle_canvas_width=subtitle_canvas_width,
+            subtitle_canvas_height=subtitle_canvas_height,
             external_subtitle_path=external_sub_path,
             subtitle_font_size=self._safe_int(self.sub_font_size_var.get(), 24),
             subtitle_font_color="#FFFFFF",

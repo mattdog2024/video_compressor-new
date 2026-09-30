@@ -19,6 +19,9 @@ class SubtitleStream:
     language: str
     title: str
     default: bool
+    # 图片字幕的原始定位画布，文本字幕通常为 0×0。
+    width: int = 0
+    height: int = 0
 
 
 @dataclass
@@ -201,6 +204,8 @@ def _parse_probe_data(data: dict, file_path: str, file_name: str, file_size: int
                 language=stream.get("tags", {}).get("language", ""),
                 title=stream.get("tags", {}).get("title", ""),
                 default=stream.get("disposition", {}).get("default", 0) == 1,
+                width=int(stream.get("width", 0) or 0),
+                height=int(stream.get("height", 0) or 0),
             )
             info.subtitle_streams.append(sub)
             subtitle_ordinal += 1

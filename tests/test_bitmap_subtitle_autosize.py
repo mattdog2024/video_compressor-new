@@ -1,4 +1,4 @@
-"""图片字幕按输出分辨率自动放大的回归测试。"""
+"""图片字幕保留原片位置的回归测试。"""
 import shutil
 import subprocess
 import tempfile
@@ -11,7 +11,7 @@ from core.ffmpeg_engine import CompressOptions, CompressTask, FFmpegEngine
 
 
 class BitmapSubtitleAutoSizeTests(unittest.TestCase):
-    def test_scale_factor_tracks_effective_output_height(self):
+    def test_legacy_scale_factor_stays_available_for_ui_hint_only(self):
         scale = FFmpegEngine._bitmap_subtitle_scale_factor
         self.assertEqual(scale("480p", 1080), 2.0)
         self.assertAlmostEqual(scale("720p", 1080), 960 / 720, places=2)
@@ -20,7 +20,7 @@ class BitmapSubtitleAutoSizeTests(unittest.TestCase):
         self.assertEqual(scale("720p", 480), 2.0)
         self.assertEqual(scale("原始分辨率", 1080), 1.0)
 
-    def test_command_enlarges_480p_bitmap_subtitles_and_anchors_bottom(self):
+    def test_command_preserves_bitmap_canvas_coordinates(self):
         command = FFmpegEngine().build_command(
             CompressTask(1, "movie.mkv", "output.mp4"),
             CompressOptions(
@@ -31,17 +31,17 @@ class BitmapSubtitleAutoSizeTests(unittest.TestCase):
             source_height=1080,
         )
         graph = command[command.index("-filter_complex") + 1]
-        self.assertIn("[subs]scale=trunc(iw*2.00/2)*2", graph)
-        self.assertIn("overlay=x=(W-w)/2:y=H-h", graph)
+        self.assertNotIn("[subs]scale=", graph)
+        self.assertIn("[vbase][subs]overlay=shortest=0:eof_action=pass:repeatlast=1:alpha=straight:format=auto", graph)
 
     @unittest.skipUnless(shutil.which("ffmpeg"), "FFmpeg not installed")
-    def test_full_canvas_bitmap_layer_visibly_grows_at_480p(self):
-        """模拟 PGS 的全透明画布，确认 480p 输出时可见字幕面积至少变大一倍。"""
+    def test_full_canvas_bitmap_layer_keeps_visible_text_inside_480p_frame(self):
+        """模拟 PGS 的全透明画布，确认缩小时不把字幕推到画面外。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             work = Path(temp_dir)
             canvas = work / "subtitle_canvas.png"
             baseline = work / "baseline.png"
-            enhanced = work / "enhanced.png"
+            safe = work / "safe.png"
             layer = Image.new("RGBA", (1920, 1080), (0, 0, 0, 0))
             draw = ImageDraw.Draw(layer)
             # 纯白矩形模拟图片字幕的实际文字区域，位于原始 1080p 画布底部。
@@ -49,16 +49,8 @@ class BitmapSubtitleAutoSizeTests(unittest.TestCase):
             layer.save(canvas)
 
             commands = {
-                baseline: (
-                    "[0:v][1:v]scale2ref[subs][vbase];"
-                    "[vbase][subs]overlay=0:0[burned];[burned]scale=-2:480[out]"
-                ),
-                enhanced: (
-                    "[0:v][1:v]scale2ref[subs][vbase];"
-                    "[subs]scale=trunc(iw*2/2)*2:trunc(ih*2/2)*2:flags=lanczos[autosubs];"
-                    "[vbase][autosubs]overlay=x=(W-w)/2:y=H-h[burned];"
-                    "[burned]scale=-2:480[out]"
-                ),
+                baseline: "[0:v][1:v]scale2ref[subs][vbase];[vbase][subs]overlay=0:0[burned];[burned]scale=-2:480[out]",
+                safe: "[0:v][1:v]scale2ref[subs][vbase];[vbase][subs]overlay=shortest=0:eof_action=pass:repeatlast=1[burned];[burned]scale=-2:480[out]",
             }
             for output, graph in commands.items():
                 subprocess.run([
@@ -67,16 +59,19 @@ class BitmapSubtitleAutoSizeTests(unittest.TestCase):
                     "-filter_complex", graph, "-map", "[out]", "-frames:v", "1", str(output),
                 ], check=True, capture_output=True, text=True)
 
-            def visible_area(image_path):
+            def visible_box(image_path):
                 image = Image.open(image_path).convert("RGB")
                 pixels = [
                     (x, y) for y in range(image.height) for x in range(image.width)
                     if min(image.getpixel((x, y))) > 220
                 ]
                 xs, ys = zip(*pixels)
-                return (max(xs) - min(xs) + 1) * (max(ys) - min(ys) + 1)
+                return min(xs), min(ys), max(xs), max(ys)
 
-            self.assertGreater(visible_area(enhanced), visible_area(baseline) * 3)
+            self.assertEqual(visible_box(safe), visible_box(baseline))
+            _, top, _, bottom = visible_box(safe)
+            self.assertGreater(top, 400)
+            self.assertLess(bottom, 480)
 
 
 if __name__ == "__main__":

@@ -19,16 +19,16 @@ class SubtitleSizeAndFastVolumeTests(unittest.TestCase):
         filter_text = command[command.index("-vf") + 1]
         self.assertIn("FontSize=28", filter_text)
         self.assertIn("Outline=2", filter_text)
-        self.assertEqual(command[command.index("-b:v") + 1], "400k")
-        self.assertEqual(command[command.index("-maxrate") + 1], "480k")
+        self.assertEqual(command[command.index("-b:v") + 1], "900k")
+        self.assertEqual(command[command.index("-maxrate") + 1], "1200k")
 
     def test_two_hour_480p_fast_target_is_near_user_size_goal(self):
         duration_seconds = 1 * 3600 + 54 * 60
-        video_kbps = 400
-        audio_kbps = 96
+        video_kbps = 900
+        audio_kbps = 128
         estimated_mb = (video_kbps + audio_kbps) * 1000 * duration_seconds / 8 / 1_000_000
-        self.assertGreaterEqual(estimated_mb, 420)
-        self.assertLessEqual(estimated_mb, 430)
+        self.assertGreaterEqual(estimated_mb, 860)
+        self.assertLessEqual(estimated_mb, 880)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,10 @@ a = Analysis(
         # 内嵌FFmpeg二进制
         (os.path.join(project_dir, 'assets', 'ffmpeg', 'ffmpeg.exe'), 'assets/ffmpeg'),
         (os.path.join(project_dir, 'assets', 'ffmpeg', 'ffprobe.exe'), 'assets/ffmpeg'),
+        # PGS/DVB/VobSub 图片字幕原生烧录器及其许可证
+        (os.path.join(project_dir, 'assets', 'handbrake', 'HandBrakeCLI.exe'), 'assets/handbrake'),
+        (os.path.join(project_dir, 'assets', 'handbrake', 'COPYING'), 'assets/handbrake'),
+        (os.path.join(project_dir, 'assets', 'handbrake', 'LICENSE'), 'assets/handbrake'),
         # 图标
         (os.path.join(project_dir, 'assets', 'icon.ico'), 'assets'),
     ],
@@ -30,6 +34,7 @@ a = Analysis(
         'core.hardware',
         'core.subtitle',
         'core.probe',
+        'core.task_pool',
         'utils',
         'utils.helpers',
         'windnd',

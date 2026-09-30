@@ -32,11 +32,13 @@ class EmbeddedSubtitleCommandTests(unittest.TestCase):
                 {"index": 4, "codec_type": "subtitle", "codec_name": "ass",
                  "disposition": {"default": 1}, "tags": {"language": "chi"}},
                 {"index": 7, "codec_type": "subtitle", "codec_name": "hdmv_pgs_subtitle",
+                 "width": 1280, "height": 720,
                  "disposition": {"default": 0}, "tags": {"language": "eng"}},
             ],
         }
         info = _parse_probe_data(data, "movie.mkv", "movie.mkv", 1)
         self.assertEqual([(item.index, item.ordinal) for item in info.subtitle_streams], [(4, 0), (7, 1)])
+        self.assertEqual((info.subtitle_streams[1].width, info.subtitle_streams[1].height), (1280, 720))
 
     def test_text_embedded_subtitle_burns_directly_from_container(self):
         """文本内置字幕应直接从视频容器读取，而非先提取为临时 SRT。"""
@@ -62,21 +64,41 @@ class EmbeddedSubtitleCommandTests(unittest.TestCase):
             CompressOptions(
                 encoder="libx264", subtitle_mode="embedded",
                 subtitle_stream_index=7, subtitle_stream_ordinal=1,
-                subtitle_codec="hdmv_pgs_subtitle",
+                subtitle_codec="hdmv_pgs_subtitle", subtitle_canvas_width=1280,
+                subtitle_canvas_height=720,
             ),
             total_duration=10,
             source_height=480,
         )
         filter_complex = self.option_value(command, "-filter_complex")
+        self.assertEqual(self.option_value(command, "-canvas_size"), "1280x720")
         self.assertIn("-fix_sub_duration", command)
         self.assertIn("[0:s:1]", filter_complex)
         self.assertIn("scale2ref[subs][vbase]", filter_complex)
-        self.assertIn("scale=trunc(iw*2.00/2)*2:trunc(ih*2.00/2)*2", filter_complex)
-        self.assertIn("overlay=x=(W-w)/2:y=H-h:eof_action=pass:repeatlast=1", filter_complex)
+        self.assertNotIn("[subs]scale=", filter_complex)
+        self.assertIn("[vbase][subs]overlay=shortest=0:eof_action=pass:repeatlast=1:alpha=straight:format=auto", filter_complex)
         self.assertIn("[burned]scale=", filter_complex)
         map_positions = [index for index, value in enumerate(command) if value == "-map"]
         self.assertEqual(command[map_positions[0] + 1], "[vout]")
         self.assertEqual(command[map_positions[1] + 1], "0:a:0?")
+
+    def test_bitmap_subtitle_uses_handbrake_native_burn_command(self):
+        """PGS 图片字幕应由 HandBrake 原生烧录器处理，避免 FFmpeg 空图层。"""
+        options = CompressOptions(
+            resolution="480p", quality="极速", encoder="h264_nvenc",
+            subtitle_mode="embedded", subtitle_stream_index=7,
+            subtitle_stream_ordinal=1, subtitle_codec="hdmv_pgs_subtitle", volume=60,
+        )
+        command = self.engine.build_handbrake_command(
+            self.task, options, total_duration=120, source_height=692,
+        )
+        self.assertIn("--subtitle", command)
+        self.assertEqual(self.option_value(command, "--subtitle"), "2")
+        self.assertIn("--subtitle-burned=1", command)
+        self.assertEqual(self.option_value(command, "--encoder"), "nvenc_h264")
+        self.assertEqual(self.option_value(command, "--vb"), "900")
+        self.assertEqual(self.option_value(command, "--ab"), "128")
+        self.assertEqual(self.option_value(command, "--gain"), "-4.44")
 
 
 @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "FFmpeg/FFprobe not installed")

@@ -68,6 +68,34 @@ jobs:
           Copy-Item $ffmpeg.FullName "assets/ffmpeg/ffmpeg.exe" -Force
           Copy-Item $ffprobe.FullName "assets/ffmpeg/ffprobe.exe" -Force
 
+      - name: Download native bitmap subtitle renderer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # HandBrake is used only for PGS/DVB/VobSub hard-burn. FFmpeg keeps
+          # handling ordinary text subtitles, so the fast normal path is unchanged.
+          $downloadUrl = "https://github.com/HandBrake/HandBrake/releases/download/1.11.2/HandBrakeCLI-1.11.2-win-x86_64.zip"
+          $archivePath = Join-Path $env:RUNNER_TEMP "HandBrakeCLI-1.11.2-win-x86_64.zip"
+          $extractPath = Join-Path $env:RUNNER_TEMP "handbrake"
+          $expectedSha256 = "80bfe8d5f5d11cc3ef76b834add3ed4e82dee6523ffeb435c283f88b1a21f09d"
+
+          Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath
+          $actualSha256 = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "HandBrakeCLI checksum verification failed."
+          }
+          Expand-Archive -Path $archivePath -DestinationPath $extractPath -Force
+          $cli = Get-ChildItem -Path $extractPath -Recurse -Filter "HandBrakeCLI.exe" | Select-Object -First 1
+          $copying = Get-ChildItem -Path $extractPath -Recurse -Filter "COPYING" | Select-Object -First 1
+          $license = Get-ChildItem -Path $extractPath -Recurse -Filter "LICENSE" | Select-Object -First 1
+          if (-not $cli -or -not $copying -or -not $license) {
+            throw "The HandBrake archive did not contain HandBrakeCLI.exe and license files."
+          }
+          New-Item -ItemType Directory -Path "assets/handbrake" -Force | Out-Null
+          Copy-Item $cli.FullName "assets/handbrake/HandBrakeCLI.exe" -Force
+          Copy-Item $copying.FullName "assets/handbrake/COPYING" -Force
+          Copy-Item $license.FullName "assets/handbrake/LICENSE" -Force
+
       - name: Run regression tests
         shell: pwsh
         run: python -m unittest discover -s tests -p "test_*.py" -v

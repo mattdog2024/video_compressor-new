@@ -1,6 +1,7 @@
 """FFmpeg引擎 - 构建命令、执行压缩、解析进度"""
 import os
 import re
+import math
 import subprocess
 import threading
 import time
@@ -12,7 +13,8 @@ from typing import Optional, Callable, List
 from enum import Enum
 
 from utils.helpers import (
-    get_ffmpeg_path, RESOLUTION_MAP, QUALITY_PRESETS
+    get_ffmpeg_path, get_handbrake_path, handbrake_available,
+    RESOLUTION_MAP, QUALITY_PRESETS,
 )
 from core.subtitle import (
     build_embedded_subtitle_filter, build_subtitle_filter,
@@ -65,6 +67,8 @@ class CompressOptions:
     subtitle_stream_index: int = -1
     subtitle_stream_ordinal: int = -1
     subtitle_codec: str = ""
+    subtitle_canvas_width: int = 0
+    subtitle_canvas_height: int = 0
     external_subtitle_path: str = ""
     subtitle_font_size: int = 24
     subtitle_font_color: str = "#FFFFFF"
@@ -89,6 +93,86 @@ class FFmpegEngine:
         self._start_time: float = 0
         self._temporary_subtitle_dirs: List[str] = []
 
+    @staticmethod
+    def _uses_bitmap_subtitle_backend(options: CompressOptions) -> bool:
+        """图片字幕必须交给 HandBrake 原生渲染器处理。"""
+        return (
+            options.subtitle_mode == "embedded"
+            and options.subtitle_stream_ordinal >= 0
+            and is_bitmap_subtitle_codec(options.subtitle_codec)
+        )
+
+    @staticmethod
+    def _handbrake_encoder_name(encoder_name: str) -> str:
+        """将现有的编码器选择映射为 HandBrakeCLI 名称。"""
+        return {
+            "h264_nvenc": "nvenc_h264",
+            "h264_qsv": "qsv_h264",
+            "h264_amf": "vce_h264",
+            "libx264": "x264",
+        }.get(encoder_name, "x264")
+
+    def build_handbrake_command(self, task: CompressTask, options: CompressOptions,
+                                total_duration: float = 0,
+                                source_height: int = 0) -> list:
+        """构建 PGS/DVB/VobSub 图片字幕的 HandBrake 原生烧录命令。"""
+        encoder_name = self._resolve_encoder(options)
+        if options.platform_compatibility:
+            encoder_name = self._get_platform_compatible_encoder(encoder_name)
+        handbrake_encoder = self._handbrake_encoder_name(encoder_name)
+        quality_config = QUALITY_PRESETS.get(options.quality, QUALITY_PRESETS["标准"])
+
+        cmd = [
+            get_handbrake_path(),
+            "-i", task.input_file,
+            "-o", task.output_file,
+            "--format", "av_mp4",
+            "--optimize",
+            "--crop", "0:0:0:0",
+            "--encoder", handbrake_encoder,
+            "--subtitle", str(options.subtitle_stream_ordinal + 1),
+            "--subtitle-burned=1",
+        ]
+
+        # 不放大低分辨率片源；对指定分辨率采用 HandBrake 原生缩放。
+        target_height = RESOLUTION_MAP.get(options.resolution, RESOLUTION_MAP["720p"])["height"]
+        if target_height > 0 and (source_height <= 0 or source_height > target_height):
+            cmd.extend(["--width", "0", "--height", str(target_height)])
+
+        if options.quality == "极速":
+            target_rate = int(self._fast_nvenc_target_rate(options.resolution, source_height).rstrip("k"))
+            # 图片字幕走 HandBrake 的平均码率模式，和极速 NVENC 使用同一档位，
+            # 让长片不会糊成马赛克也不会无上限变大。
+            cmd.extend(["--vb", str(target_rate), "--no-multi-pass"])
+            if handbrake_encoder == "x264":
+                cmd.extend(["--encoder-preset", "veryfast"])
+            else:
+                cmd.extend(["--encoder-preset", "fast"])
+        else:
+            cmd.extend(["--quality", str(quality_config["crf"])])
+            if handbrake_encoder == "x264":
+                cmd.extend(["--encoder-preset", quality_config["preset"]])
+
+        if options.remove_audio:
+            cmd.extend(["--audio", "none"])
+        else:
+            audio_br = quality_config["audio_br"] if options.quality == "极速" else options.audio_bitrate
+            cmd.extend(["--audio", "1", "--aencoder", "av_aac", "--ab", audio_br.rstrip("k")])
+            if options.volume != 100:
+                # HandBrake 的 gain 使用 dB；与 FFmpeg 的 volume 比例语义对应。
+                volume_factor = max(0.01, options.volume / 100.0)
+                gain_db = 20 * math.log10(volume_factor)
+                cmd.extend(["--gain", f"{gain_db:.2f}"])
+
+        if options.skip_start > 0:
+            cmd.extend(["--start-at", f"duration:{options.skip_start}"])
+        if total_duration > 0 and options.skip_end > 0:
+            encode_duration = total_duration - options.skip_start - options.skip_end
+            if encode_duration > 0:
+                cmd.extend(["--stop-at", f"duration:{encode_duration}"])
+
+        return cmd
+
     def build_command(self, task: CompressTask, options: CompressOptions,
                       total_duration: float = 0,
                       source_height: int = 0) -> list:
@@ -103,6 +187,14 @@ class FFmpegEngine:
             and is_bitmap_subtitle_codec(options.subtitle_codec)
         )
         if is_bitmap_embedded:
+            # 部分 PGS 的字幕画布高度会大于实际电影画面（如影片 1280×692、
+            # 字幕画布 1280×720）。把原始画布传给解码器，避免它把带坐标的
+            # 图片字幕解成空图层或错位到屏幕外。
+            if options.subtitle_canvas_width > 0 and options.subtitle_canvas_height > 0:
+                cmd.extend([
+                    "-canvas_size",
+                    f"{options.subtitle_canvas_width}x{options.subtitle_canvas_height}",
+                ])
             cmd.append("-fix_sub_duration")
 
         # 跳过开头
@@ -170,25 +262,19 @@ class FFmpegEngine:
             encoder_name = self._get_platform_compatible_encoder(encoder_name)
 
         if bitmap_subtitle_ordinal >= 0:
-            # 图片字幕的画布尺寸常和视频不一致（例如 1280x720 PGS 配 720x480
-            # 视频）。先按原视频画布缩放图片字幕；当输出为 480p/720p 时，再把
-            # 整张透明字幕画布自动放大并贴底，避免字幕随着视频缩小而小到看不清。
+            # 图片字幕（PGS/VobSub）是一整张带透明边的定位画布，不是只有文字的
+            # 小图片。把整张画布再放大并贴右下，会改变它的坐标，可能直接把字幕
+            # 推到画面外，结果是“压完没有字幕”。先按视频参考画布直接叠加，再把
+            # 已叠好的画面整体缩放，才能保留原片字幕的位置和显示时长。
             video_filters = ",".join(vf_parts) if vf_parts else "null"
-            bitmap_scale = self._bitmap_subtitle_scale_factor(
-                options.resolution, source_height,
-            )
             filter_complex = (
                 "[0:v:0]setpts=PTS-STARTPTS[vsrc];"
                 f"[0:s:{bitmap_subtitle_ordinal}]setpts=PTS-STARTPTS[ssrc];"
                 "[ssrc][vsrc]scale2ref[subs][vbase];"
-                # 图片字幕是带透明边的完整画布。放大画布后，靠右下对齐可让字幕
-                # 保持在底部，同时使文字本身随输出分辨率自动变大。
-                f"[subs]scale=trunc(iw*{bitmap_scale:.2f}/2)*2:"
-                f"trunc(ih*{bitmap_scale:.2f}/2)*2:flags=lanczos[autosubs];"
                 # 图片字幕通常只在开始和清除时各给一帧，必须保留开始帧到下一张
                 # 透明清除帧，否则用户会看到“压制成功但字幕一闪而过/完全没显示”。
-                "[vbase][autosubs]overlay=x=(W-w)/2:y=H-h:"
-                "eof_action=pass:repeatlast=1[burned];"
+                "[vbase][subs]overlay=shortest=0:eof_action=pass:repeatlast=1:"
+                "alpha=straight:format=auto[burned];"
                 f"[burned]{video_filters}[vout]"
             )
             cmd.extend(["-filter_complex", filter_complex, "-map", "[vout]"])
@@ -208,17 +294,19 @@ class FFmpegEngine:
             crf = quality_config["crf"]
             cq_value = max(0, min(51, crf))
             cmd.extend(["-c:v", encoder_name])
-            # “极速”优先吞吐量；其他模式继续以画质优先的高质量VBR编码。
+            # “极速”仍优先吞吐量，但不能把三小时影片压到明显起色块的码率。
             rate_control = "vbr" if options.quality == "极速" else "vbr_hq"
-            preset = "p1" if options.quality == "极速" else "p4"
+            preset = "p2" if options.quality == "极速" else "p4"
             cmd.extend(["-rc", rate_control])
             cmd.extend(["-cq", str(cq_value)])
             cmd.extend(["-preset", preset])
             if options.quality == "极速":
                 # 极速模式曾设置 -b:v 0，CQ 会无限追画质，长片即使压到 480p
-                # 仍可能比原压缩包大。按实际输出高度给 VBR 一个目标和上限。
+                # 仍可能比原压缩包大；后来 400k 又过度压缩。按实际输出高度给
+                # VBR 合理的目标和上限，保留清晰度同时避免无限膨胀。
                 target_rate = self._fast_nvenc_target_rate(options.resolution, source_height)
-                max_rate = int(target_rate.rstrip("k")) * 12 // 10
+                target_kbps = int(target_rate.rstrip("k"))
+                max_rate = ((target_kbps * 4 // 3 + 99) // 100) * 100
                 cmd.extend([
                     "-b:v", target_rate,
                     "-maxrate", f"{max_rate}k",
@@ -344,14 +432,14 @@ class FFmpegEngine:
             effective_height = source_height
 
         if effective_height <= 480:
-            return "400k"
-        if effective_height <= 576:
-            return "550k"
-        if effective_height <= 720:
             return "900k"
+        if effective_height <= 576:
+            return "900k"
+        if effective_height <= 720:
+            return "1400k"
         if effective_height <= 1080:
-            return "2000k"
-        return "3500k"
+            return "3000k"
+        return "5000k"
 
     def _resolve_encoder(self, options: CompressOptions) -> str:
         """解析编码器选择"""
@@ -393,13 +481,31 @@ class FFmpegEngine:
         self._start_time = time.time()
 
         prepared_options = self._prepare_text_subtitle_options(task, options)
-        cmd = self.build_command(task, prepared_options, total_duration, source_height=source_height)
-        logger.info(f"FFmpeg命令: {' '.join(cmd)}")
+
+        if self._uses_bitmap_subtitle_backend(prepared_options):
+            if not handbrake_available():
+                task.status = TaskStatus.FAILED
+                task.error_message = (
+                    "图片字幕（PGS/DVB/VobSub）需要 HandBrake 原生烧录组件，"
+                    "但当前发布包里未找到 HandBrakeCLI。请下载最新版压缩器后重试。"
+                )
+                if self._on_error:
+                    self._on_error(task)
+                return
+            cmd = self.build_handbrake_command(
+                task, prepared_options, total_duration, source_height=source_height,
+            )
+            logger.info("HandBrake图片字幕烧录命令: %s", " ".join(cmd))
+            run_target = self._run_handbrake_process
+        else:
+            cmd = self.build_command(task, prepared_options, total_duration, source_height=source_height)
+            logger.info("FFmpeg命令: %s", " ".join(cmd))
+            run_target = self._run_process
 
         task.status = TaskStatus.RUNNING
 
         self._thread = threading.Thread(
-            target=self._run_process,
+            target=run_target,
             args=(cmd, task, total_duration, prepared_options, source_height),
             daemon=True
         )
@@ -477,6 +583,39 @@ class FFmpegEngine:
         self._process.wait()
         stderr_thread.join(timeout=2)
         return self._process.returncode, "".join(stderr_output)
+
+    def _execute_handbrake_process(self, cmd: list, task: CompressTask,
+                                   total_duration: float) -> tuple[int, str]:
+        """执行 HandBrakeCLI 并把百分比进度转换为界面任务进度。"""
+        output_lines = []
+        creation_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        self._process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creation_flags,
+        )
+        progress_pattern = re.compile(r"Encoding:\s*task\s+\d+\s+of\s+\d+,\s*([\d.]+)\s*%")
+        for line in self._process.stdout or []:
+            output_lines.append(line)
+            match = progress_pattern.search(line)
+            if match:
+                try:
+                    task.progress = min(99.0, max(0.0, float(match.group(1))))
+                    task.elapsed_time = time.time() - self._start_time
+                    if task.progress > 0 and total_duration > 0:
+                        elapsed = max(0.001, task.elapsed_time)
+                        encoded_seconds = total_duration * task.progress / 100.0
+                        task.speed = f"{encoded_seconds / elapsed:.1f}x"
+                        task.remaining_time = elapsed * (100.0 - task.progress) / task.progress
+                    if self._on_progress:
+                        self._on_progress(task)
+                except ValueError:
+                    pass
+        self._process.wait()
+        return self._process.returncode, "".join(output_lines)
 
     @staticmethod
     def _is_gpu_encoder(encoder_name: str) -> bool:
@@ -568,6 +707,64 @@ class FFmpegEngine:
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
+            if self._on_error:
+                self._on_error(task)
+        finally:
+            self._cleanup_temporary_subtitles()
+
+    def _run_handbrake_process(self, cmd: list, task: CompressTask, total_duration: float,
+                               options: CompressOptions, source_height: int):
+        """运行图片字幕原生烧录；硬件编码失败时用 CPU 自动重试一次。"""
+        try:
+            returncode, output = self._execute_handbrake_process(cmd, task, total_duration)
+            if self._cancelled:
+                task.status = TaskStatus.CANCELLED
+                return
+            if returncode == 0:
+                self._complete_task(task)
+                return
+
+            encoder = self._resolve_encoder(options)
+            if self._is_gpu_encoder(encoder):
+                gpu_error = self._format_error(output)
+                task.fallback_note = "图片字幕硬件编码不可用，已自动改用CPU编码"
+                logger.warning("HandBrake图片字幕硬件编码失败：%s；改用 x264 重试", gpu_error)
+                try:
+                    if os.path.exists(task.output_file):
+                        os.remove(task.output_file)
+                except OSError:
+                    pass
+                task.progress = 0.0
+                task.speed = ""
+                task.remaining_time = None
+                if self._on_progress:
+                    self._on_progress(task)
+                fallback_options = replace(options, encoder="libx264", gpu_encoder="")
+                fallback_cmd = self.build_handbrake_command(
+                    task, fallback_options, total_duration, source_height,
+                )
+                returncode, fallback_output = self._execute_handbrake_process(
+                    fallback_cmd, task, total_duration,
+                )
+                if self._cancelled:
+                    task.status = TaskStatus.CANCELLED
+                    return
+                if returncode == 0:
+                    self._complete_task(task)
+                    return
+                task.status = TaskStatus.FAILED
+                task.error_message = (
+                    f"图片字幕硬件编码失败：\n{gpu_error}\n\nCPU重试也失败：\n"
+                    f"{self._format_error(fallback_output)}"
+                )[-1000:]
+            else:
+                task.status = TaskStatus.FAILED
+                task.error_message = self._format_error(output)
+            if self._on_error:
+                self._on_error(task)
+        except Exception as exc:
+            task.status = TaskStatus.FAILED
+            task.error_message = str(exc)
             if self._on_error:
                 self._on_error(task)
         finally:

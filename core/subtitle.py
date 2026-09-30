@@ -96,16 +96,18 @@ def subtitle_kind_label(codec: str) -> str:
 
 def format_subtitle_choice(file_name: str, ordinal: int, stream_index: int,
                            codec: str, language: str = "", title: str = "",
-                           is_default: bool = False) -> tuple[str, str]:
+                           is_default: bool = False, width: int = 0,
+                           height: int = 0) -> tuple[str, str]:
     """生成简短下拉项和可换行的完整字幕信息。"""
     language_label = language or "未标语言"
     kind = subtitle_kind_label(codec)
     short_label = f"第{ordinal + 1}条 · {language_label} · {kind}"
     default_label = "默认字幕" if is_default else "普通字幕"
     title_label = title or "未标注标题"
+    canvas_label = f" · 画布 {width}×{height}" if width > 0 and height > 0 else ""
     detail = (
         f"文件：{file_name}\n"
-        f"字幕：第{ordinal + 1}条（流 #{stream_index}）· {kind} · {language_label} · {default_label}\n"
+        f"字幕：第{ordinal + 1}条（流 #{stream_index}）· {kind} · {language_label} · {default_label}{canvas_label}\n"
         f"完整名称：{title_label}"
     )
     return short_label, detail

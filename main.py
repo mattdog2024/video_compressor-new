@@ -69,7 +69,7 @@ def check_ffmpeg():
 def main():
     """主函数"""
     logger.info("=" * 50)
-    logger.info("万能视频压缩器 v1.0.14 启动")
+    logger.info("万能视频压缩器 v1.0.15 启动")
     logger.info("=" * 50)
 
     # 检查FFmpeg

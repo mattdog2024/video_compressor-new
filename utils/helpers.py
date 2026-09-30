@@ -3,6 +3,7 @@ import os
 import sys
 import json
 import time
+import shutil
 from pathlib import Path
 
 
@@ -93,6 +94,27 @@ def get_ffprobe_path():
     return "ffprobe"
 
 
+def get_handbrake_path():
+    """获取打包版或系统安装的 HandBrakeCLI 路径。"""
+    bundled = get_resource_path(os.path.join("assets", "handbrake", "HandBrakeCLI.exe"))
+    if bundled.exists():
+        return str(bundled)
+
+    app_bundled = get_app_dir() / "handbrake" / "HandBrakeCLI.exe"
+    if app_bundled.exists():
+        return str(app_bundled)
+
+    return "HandBrakeCLI.exe" if os.name == "nt" else "HandBrakeCLI"
+
+
+def handbrake_available():
+    """检查图片字幕原生烧录器是否真实可执行。"""
+    executable = get_handbrake_path()
+    if os.path.isabs(executable) or os.path.dirname(executable):
+        return os.path.exists(executable)
+    return shutil.which(executable) is not None
+
+
 def load_settings():
     """加载用户设置"""
     settings_file = get_app_dir() / "settings.json"
@@ -167,7 +189,7 @@ RESOLUTION_MAP = {
 }
 
 QUALITY_PRESETS = {
-    "极速": {"crf": 30, "preset": "ultrafast", "audio_br": "96k"},
+    "极速": {"crf": 26, "preset": "ultrafast", "audio_br": "128k"},
     "快速": {"crf": 26, "preset": "veryfast", "audio_br": "128k"},
     "标准": {"crf": 23, "preset": "medium", "audio_br": "128k"},
     "高质量": {"crf": 18, "preset": "slow", "audio_br": "192k"},

@@ -14,7 +14,7 @@ if errorlevel 1 (
 )
 
 REM Install dependencies
-echo [1/4] Installing dependencies...
+echo [1/5] Installing dependencies...
 pip install Pillow windnd pyinstaller -q
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies
@@ -23,7 +23,7 @@ if errorlevel 1 (
 )
 
 REM Check FFmpeg
-echo [2/4] Checking FFmpeg...
+echo [2/5] Checking FFmpeg...
 if not exist "assets\ffmpeg\ffmpeg.exe" (
     echo.
     echo [INFO] FFmpeg not found. Downloading...
@@ -42,14 +42,21 @@ if not exist "assets\ffmpeg\ffmpeg.exe" (
     echo.
 )
 
+REM Check HandBrakeCLI, used for native bitmap subtitle burn-in.
+echo [3/5] Checking native bitmap subtitle renderer...
+if not exist "assets\handbrake\HandBrakeCLI.exe" (
+    echo [INFO] HandBrakeCLI not found. Downloading...
+    powershell -Command "$ProgressPreference='SilentlyContinue'; $url='https://github.com/HandBrake/HandBrake/releases/download/1.11.2/HandBrakeCLI-1.11.2-win-x86_64.zip'; $out='handbrake_temp.zip'; try { Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing; Expand-Archive -Path $out -DestinationPath 'handbrake_temp' -Force; New-Item -ItemType Directory -Path 'assets\handbrake' -Force | Out-Null; Copy-Item 'handbrake_temp\HandBrakeCLI.exe' 'assets\handbrake\' -Force; Copy-Item 'handbrake_temp\doc\COPYING' 'assets\handbrake\' -Force; Copy-Item 'handbrake_temp\doc\LICENSE' 'assets\handbrake\' -Force; Remove-Item 'handbrake_temp' -Recurse -Force; Remove-Item $out -Force; Write-Host 'HandBrakeCLI downloaded!' } catch { Write-Host 'Auto download failed. PGS/DVB/VobSub subtitles will not be available in this build.' }"
+)
+
 REM Prepare icon
-echo [3/4] Preparing resources...
+echo [4/5] Preparing resources...
 if not exist "assets\icon.ico" (
     echo [INFO] Icon file not found, using default icon.
 )
 
 REM Build
-echo [4/4] Building EXE...
+echo [5/5] Building EXE...
 pyinstaller build.spec --clean --noconfirm
 if errorlevel 1 (
     echo [ERROR] Build failed
