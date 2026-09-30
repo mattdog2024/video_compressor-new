@@ -13,4 +13,7 @@
 | 已发布 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.10 | v1.0.10，文字和图片字幕自动适应大小版。 |
 | v1.0.10 发布页 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.10 | 正式发布页。 |
 | v1.0.10 构建记录 | https://github.com/mattdog2024/video_compressor-new/actions/runs/36652094503 | 33 项回归测试、Windows 打包和上传均成功。 |
-| 当前计划发布 | GitHub Release `v1.0.11` | ASS/SRT 的 480p、720p、1080p 大字号可读性修复版。 |
+| 推荐下载 | https://github.com/mattdog2024/video_compressor-new/releases/download/v1.0.11/VideoCompressor-v1.0.11-windows-x64.exe | v1.0.11，ASS/SRT 大字号可读性修复版。 |
+| v1.0.11 发布页 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.11 | 正式发布页。 |
+| v1.0.11 构建记录 | https://github.com/mattdog2024/video_compressor-new/actions/runs/36653311723 | 34 项回归测试、Windows 打包和上传均成功。 |
+| 当前计划发布 | GitHub Release `v1.0.12` | 修复 Windows 内置 ASS 标准化失败，确保干净 SRT 的大字号样式真正生效。 |

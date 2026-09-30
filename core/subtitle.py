@@ -20,6 +20,11 @@ _ASS_OVERRIDE_BLOCK = re.compile(r"\{\\[^}]*\}")
 _HTML_STYLE_TAG = re.compile(r"</?(?:font|b|i|u|s|span)(?:\s+[^>]*)?>", re.IGNORECASE)
 
 
+def _is_windows() -> bool:
+    """兼容 Windows 打包版的子进程隐藏窗口判断。"""
+    return os.name == "nt"
+
+
 def clean_text_subtitle_content(content: str) -> str:
     """清掉 ASS/HTML 样式覆盖，只保留可读文字和时间轴。"""
     clean = (content or "").replace("\r\n", "\n").replace("\r", "\n")

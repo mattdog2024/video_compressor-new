@@ -1,5 +1,6 @@
 """文字内置字幕标准化与清晰样式的回归测试。"""
 import unittest
+from unittest.mock import patch
 
 from core.ffmpeg_engine import CompressOptions, CompressTask, FFmpegEngine
 from core.subtitle import clean_text_subtitle_content, build_subtitle_filter
@@ -56,13 +57,28 @@ class TextSubtitleNormalizationTests(unittest.TestCase):
             subtitle_stream_ordinal=0, subtitle_codec="subrip",
         )
         original = "core.ffmpeg_engine.prepare_clean_embedded_text_subtitle"
-        from unittest.mock import patch
         with patch(original, return_value="/tmp/clean.srt"):
             with patch("core.ffmpeg_engine.tempfile.mkdtemp", return_value="/tmp/subtitle-work"):
                 prepared = engine._prepare_text_subtitle_options(task, options)
         self.assertEqual(prepared.subtitle_mode, "external")
         self.assertEqual(prepared.external_subtitle_path, "/tmp/clean.srt")
         self.assertEqual(prepared.subtitle_font_size, 24)
+
+    def test_embedded_ass_preparation_is_called_before_building_filter(self):
+        engine = FFmpegEngine()
+        task = CompressTask(1, "input.mkv", "output.mp4")
+        options = CompressOptions(
+            resolution="480p", subtitle_mode="embedded", subtitle_stream_index=2,
+            subtitle_stream_ordinal=0, subtitle_codec="ass", subtitle_font_size=24,
+        )
+        with patch("core.ffmpeg_engine.prepare_clean_embedded_text_subtitle", return_value="/tmp/clean.srt"):
+            with patch("core.ffmpeg_engine.tempfile.mkdtemp", return_value="/tmp/subtitle-work"):
+                prepared = engine._prepare_text_subtitle_options(task, options)
+        command = engine.build_command(task, prepared, source_height=690)
+        filter_text = command[command.index("-vf") + 1]
+        self.assertIn("clean.srt", filter_text)
+        self.assertIn("FontSize=42", filter_text)
+        self.assertNotIn("input.mkv':si=0", filter_text)
 
 
 if __name__ == "__main__":

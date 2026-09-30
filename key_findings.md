@@ -14,3 +14,5 @@
 | 外部依据 | 图片字幕按视频画布缩放的 `scale2ref` 用法参考：https://superuser.com/questions/1759347/using-overlay-on-pgs-subtitles-is-putting-them-in-the-wrong-position 。DVD 图片字幕用 FFmpeg `overlay` 烧录的基础命令参考：https://bbs.archlinux.org/viewtopic.php?id=180688 。 |
 | 网络完整性 | 本次仅修改字幕处理与界面显示；没有网络、代理、防火墙或系统网络设置代码。 |
 | v1.0.10 发布验证 | GitHub Actions 构建 `36652094503` 成功，发布包为 73,912,540 字节；保留 256×256 应用图标，且打包配置和窗口图标配置均已核对。 |
+| v1.0.11 发布验证 | GitHub Actions 构建 `36653311723` 成功；提交 `83cf755` 与 Release `v1.0.11` 对应，EXE 为 73,915,364 字节。 |
+| Windows ASS 根因 | v1.0.11 日志中的 `_is_windows is not defined` 使 ASS 标准化失败，程序退回烧原始 ASS；其行内 `\fs` 等样式会覆盖大字号。v1.0.12 已修复并以真实内置 ASS MKV 回归。 |
