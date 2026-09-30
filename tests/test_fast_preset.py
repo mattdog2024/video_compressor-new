@@ -42,7 +42,16 @@ class FastPresetTests(unittest.TestCase):
         self.assertEqual(self.option_value(command, "-rc"), "vbr")
         self.assertEqual(self.option_value(command, "-preset"), "p1")
         self.assertEqual(self.option_value(command, "-cq"), "30")
+        self.assertEqual(self.option_value(command, "-b:v"), "400k")
+        self.assertEqual(self.option_value(command, "-maxrate"), "480k")
+        self.assertEqual(self.option_value(command, "-bufsize"), "800k")
         self.assertEqual(self.option_value(command, "-b:a"), "96k")
+
+    def test_nvenc_fast_rate_scales_with_output_height(self):
+        rate = self.engine._fast_nvenc_target_rate
+        self.assertEqual(rate("480p", 690), "400k")
+        self.assertEqual(rate("720p", 1080), "900k")
+        self.assertEqual(rate("1080p", 1080), "2000k")
 
     def test_standard_preset_keeps_selected_audio_bitrate(self):
         """非极速模式不应无声覆盖用户选择的音频码率。"""

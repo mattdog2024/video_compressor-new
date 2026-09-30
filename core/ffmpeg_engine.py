@@ -207,7 +207,18 @@ class FFmpegEngine:
             cmd.extend(["-rc", rate_control])
             cmd.extend(["-cq", str(cq_value)])
             cmd.extend(["-preset", preset])
-            cmd.extend(["-b:v", "0"])
+            if options.quality == "极速":
+                # 极速模式曾设置 -b:v 0，CQ 会无限追画质，长片即使压到 480p
+                # 仍可能比原压缩包大。按实际输出高度给 VBR 一个目标和上限。
+                target_rate = self._fast_nvenc_target_rate(options.resolution, source_height)
+                max_rate = int(target_rate.rstrip("k")) * 12 // 10
+                cmd.extend([
+                    "-b:v", target_rate,
+                    "-maxrate", f"{max_rate}k",
+                    "-bufsize", f"{int(target_rate.rstrip('k')) * 2}k",
+                ])
+            else:
+                cmd.extend(["-b:v", "0"])
         elif encoder_name in ("h264_qsv", "hevc_qsv"):
             # Intel QuickSync
             crf = quality_config["crf"]
@@ -307,10 +318,31 @@ class FFmpegEngine:
         if effective_height <= 0:
             return requested_size
 
-        # 旧阈值（480p=28）在中英双行 ASS 字幕上仍显得过小。改为更直观的
-        # 阅读大小：480p 至少 42、720p 至少 50、1080p/更高至少 60。
-        readable_minimum = min(60, max(42, round(effective_height * 0.07)))
+        # 干净 SRT 已不受原 ASS 的 \fs 样式干扰，42 在 480p 会显得过大。
+        # 改为适中可读尺寸：480p 至少 30、720p 至少 40、1080p 至少 48。
+        readable_minimum = min(48, max(30, round(effective_height * 0.055)))
         return max(requested_size, readable_minimum)
+
+    @staticmethod
+    def _fast_nvenc_target_rate(resolution: str, source_height: int) -> str:
+        """为极速 NVENC 按最终输出高度提供稳定的小体积目标视频码率。"""
+        target_height = RESOLUTION_MAP.get(
+            resolution, RESOLUTION_MAP["720p"]
+        )["height"]
+        if target_height > 0:
+            effective_height = min(source_height, target_height) if source_height > 0 else target_height
+        else:
+            effective_height = source_height
+
+        if effective_height <= 480:
+            return "400k"
+        if effective_height <= 576:
+            return "550k"
+        if effective_height <= 720:
+            return "900k"
+        if effective_height <= 1080:
+            return "2000k"
+        return "3500k"
 
     def _resolve_encoder(self, options: CompressOptions) -> str:
         """解析编码器选择"""
