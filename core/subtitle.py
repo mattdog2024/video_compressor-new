@@ -92,6 +92,20 @@ def format_subtitle_choice(file_name: str, ordinal: int, stream_index: int,
     return short_label, detail
 
 
+def select_embedded_subtitle_stream(streams, selected_stream_index: Optional[int] = None):
+    """从一个视频自己的字幕流中选轨道，不允许跨文件借用选择。"""
+    if not streams:
+        return None
+    if selected_stream_index is not None:
+        selected = next(
+            (stream for stream in streams if stream.index == selected_stream_index),
+            None,
+        )
+        if selected is not None:
+            return selected
+    return next((stream for stream in streams if stream.default), streams[0])
+
+
 def extract_subtitle(input_file: str, stream_index: int, output_dir: str = None) -> Optional[str]:
     """从视频中提取字幕流为SRT文件"""
     if output_dir is None:

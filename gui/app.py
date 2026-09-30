@@ -17,7 +17,7 @@ from core.ffmpeg_engine import (
     FFmpegEngine, CompressTask, CompressOptions, TaskStatus
 )
 from core.task_pool import TaskPool
-from core.subtitle import format_subtitle_choice
+from core.subtitle import format_subtitle_choice, select_embedded_subtitle_stream
 from utils.helpers import (
     format_file_size, format_duration, format_time_remaining,
     load_settings, save_settings, get_default_settings,
@@ -33,7 +33,7 @@ class VideoCompressorApp:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("万能视频压缩器 v1.0.8")
+        self.root.title("万能视频压缩器 v1.0.9")
         self.root.geometry("820x980")
         self.root.minsize(750, 820)
         self.root.configure(bg=DARK_THEME["bg"])
@@ -63,6 +63,9 @@ class VideoCompressorApp:
         self.file_info: Dict[int, VideoInfo] = {}  # id -> info
         self.task_queue: List[int] = []  # 待处理的file_id列表
         self.current_task_index = 0
+        # 每个文件单独保存选中的内置字幕流；缺省表示“自动选默认/第一条”。
+        self._embedded_subtitle_selections: Dict[int, int] = {}
+        self._subtitle_selection_controls: Dict[int, dict] = {}
 
         # 消息队列（线程安全更新GUI）
         self.msg_queue = queue.Queue()
@@ -356,21 +359,39 @@ class VideoCompressorApp:
         self.subtitle_mode_combo.pack(side="left", padx=(5, 10))
         self.subtitle_mode_combo.bind("<<ComboboxSelected>>", self._on_subtitle_mode_change)
 
-        # 字幕流选择（内置字幕时显示）。完整信息独立占一行，避免长片名/字幕名被截断。
+        # 内置字幕按文件分别选择。列表自身可滚动，视频多时不会挤掉开始压缩按钮。
         self.subtitle_selection_frame = tk.Frame(adv_section, bg=DARK_THEME["surface"])
-        self._create_label(self.subtitle_selection_frame, "选择内置字幕:").pack(side="left")
-        self.subtitle_stream_var = tk.StringVar(value="")
-        self.subtitle_stream_combo = ttk.Combobox(
-            self.subtitle_selection_frame, textvariable=self.subtitle_stream_var,
-            state="readonly", width=32
-        )
-        self.subtitle_stream_combo.pack(side="left", fill="x", expand=True, padx=(5, 0))
-        self.subtitle_stream_combo.bind("<<ComboboxSelected>>", self._on_subtitle_stream_selected)
+        self._create_label(
+            self.subtitle_selection_frame,
+            "每个视频单独选择内置字幕（不选则自动使用默认字幕/第一条）：",
+        ).pack(anchor="w", padx=2, pady=(0, 4))
 
-        self.subtitle_detail_label = tk.Label(
-            adv_section, text="", bg=DARK_THEME["surface"], fg=DARK_THEME["text_muted"],
-            font=FONTS["small"], anchor="w", justify="left", wraplength=730
+        self.subtitle_selection_canvas = tk.Canvas(
+            self.subtitle_selection_frame, bg=DARK_THEME["surface2"],
+            highlightthickness=1, highlightbackground=DARK_THEME["border"],
+            height=150, bd=0,
         )
+        self.subtitle_selection_scrollbar = ttk.Scrollbar(
+            self.subtitle_selection_frame, orient="vertical",
+            command=self.subtitle_selection_canvas.yview,
+        )
+        self.subtitle_selection_canvas.configure(
+            yscrollcommand=self.subtitle_selection_scrollbar.set,
+        )
+        self.subtitle_selection_rows = tk.Frame(
+            self.subtitle_selection_canvas, bg=DARK_THEME["surface2"],
+        )
+        self._subtitle_selection_canvas_window = self.subtitle_selection_canvas.create_window(
+            (0, 0), window=self.subtitle_selection_rows, anchor="nw",
+        )
+        self.subtitle_selection_rows.bind(
+            "<Configure>", self._on_subtitle_rows_configure,
+        )
+        self.subtitle_selection_canvas.bind(
+            "<Configure>", self._on_subtitle_canvas_configure,
+        )
+        self.subtitle_selection_canvas.pack(side="left", fill="both", expand=True)
+        self.subtitle_selection_scrollbar.pack(side="right", fill="y")
 
         # 外挂字幕选择
         self.btn_load_sub = StyledButton(
@@ -709,6 +730,9 @@ class VideoCompressorApp:
         self.file_queue.clear()
         self.file_info.clear()
         self.task_queue.clear()
+        self._embedded_subtitle_selections.clear()
+        if self.subtitle_mode_var.get() == "内置字幕（烧录）":
+            self._update_subtitle_streams()
         self.task_pool.reset([])
         self._reserved_output_paths.clear()
         self.file_counter = 0
@@ -721,8 +745,11 @@ class VideoCompressorApp:
         # 从各数据结构中移除
         self.file_queue.pop(file_id, None)
         self.file_info.pop(file_id, None)
+        self._embedded_subtitle_selections.pop(file_id, None)
         if file_id in self.task_queue:
             self.task_queue.remove(file_id)
+        if self.subtitle_mode_var.get() == "内置字幕（烧录）":
+            self._update_subtitle_streams()
         logger.info(f"已移除文件 #{file_id}")
 
     def _on_resolution_changed(self, *args):
@@ -750,56 +777,143 @@ class VideoCompressorApp:
 
         # 隐藏所有字幕相关控件
         self.subtitle_selection_frame.pack_forget()
-        self.subtitle_detail_label.pack_forget()
         self.btn_load_sub.pack_forget()
         self.subtitle_file_label.pack_forget()
 
         if mode == "内置字幕（烧录）":
-            # 显示字幕流选择
+            # 显示每个文件各自的字幕流选择
             self._update_subtitle_streams()
-            self.subtitle_selection_frame.pack(fill="x", padx=15, pady=(0, 2))
-            self.subtitle_detail_label.pack(fill="x", padx=15, pady=(0, 8))
+            self.subtitle_selection_frame.pack(fill="x", padx=15, pady=(0, 8))
         elif mode == "外挂字幕（烧录）":
             self.btn_load_sub.pack(side="left", padx=(0, 10))
             self.subtitle_file_label.pack(side="left")
 
     def _update_subtitle_streams(self):
-        """更新内置字幕流列表"""
-        streams = [(
-            None, None,
-            "自动选择（默认字幕 / 第一条）",
-            "每个视频优先烧录标记为“默认”的字幕；没有默认字幕时烧录第一条。",
-        )]
+        """为队列中的每一个文件创建独立的内置字幕选择框。"""
+        for child in self.subtitle_selection_rows.winfo_children():
+            child.destroy()
+        self._subtitle_selection_controls.clear()
+
+        if not self.file_info:
+            tk.Label(
+                self.subtitle_selection_rows,
+                text="请先添加视频；每个带内置字幕的视频会在这里出现独立选择项。",
+                bg=DARK_THEME["surface2"], fg=DARK_THEME["text_muted"],
+                font=FONTS["small"], anchor="w",
+            ).pack(fill="x", padx=8, pady=8)
+            return
+
         for fid, info in self.file_info.items():
-            if info.has_subtitle:
-                for sub in info.subtitle_streams:
-                    short_label, detail = format_subtitle_choice(
-                        info.file_name, sub.ordinal, sub.index, sub.codec,
-                        sub.language, sub.title, sub.default,
-                    )
-                    streams.append((fid, sub.index, short_label, detail))
+            self._create_subtitle_selection_row(fid, info)
 
-        if len(streams) > 1:
-            labels = [s[2] for s in streams]
-            self.subtitle_stream_combo["values"] = labels
-            self.subtitle_stream_combo.current(0)
-            self._subtitle_streams_data = streams
-            self._update_subtitle_detail()
+        self.subtitle_selection_canvas.yview_moveto(0)
+
+    def _create_subtitle_selection_row(self, file_id: int, info: VideoInfo):
+        """创建单个视频的字幕轨选择行，选择结果只绑定到这个文件。"""
+        row = tk.Frame(self.subtitle_selection_rows, bg=DARK_THEME["surface2"])
+        row.pack(fill="x", padx=6, pady=(5, 2))
+
+        header = tk.Frame(row, bg=DARK_THEME["surface2"])
+        header.pack(fill="x")
+        display_name = info.file_name
+        if len(display_name) > 38:
+            display_name = f"{display_name[:18]}…{display_name[-17:]}"
+        tk.Label(
+            header, text=f"文件 {file_id}：{display_name}",
+            bg=DARK_THEME["surface2"], fg=DARK_THEME["text"],
+            font=FONTS["small"], anchor="w", width=42,
+        ).pack(side="left")
+
+        if not info.subtitle_streams:
+            tk.Label(
+                header, text="没有内置字幕（此文件不会烧录字幕）",
+                bg=DARK_THEME["surface2"], fg=DARK_THEME["text_muted"],
+                font=FONTS["small"], anchor="w",
+            ).pack(side="left", fill="x", expand=True)
+            self._embedded_subtitle_selections.pop(file_id, None)
+            return
+
+        default_stream = select_embedded_subtitle_stream(info.subtitle_streams)
+        _, auto_detail = format_subtitle_choice(
+            info.file_name, default_stream.ordinal, default_stream.index,
+            default_stream.codec, default_stream.language, default_stream.title,
+            default_stream.default,
+        )
+        choices = [
+            (None, "自动（默认字幕 / 第一条）", f"自动选择：\n{auto_detail}"),
+        ]
+        for stream in info.subtitle_streams:
+            short_label, detail = format_subtitle_choice(
+                info.file_name, stream.ordinal, stream.index, stream.codec,
+                stream.language, stream.title, stream.default,
+            )
+            choices.append((stream.index, short_label, detail))
+
+        chosen_stream_index = self._embedded_subtitle_selections.get(file_id)
+        selected_index = next(
+            (index for index, item in enumerate(choices) if item[0] == chosen_stream_index),
+            0,
+        )
+        selection_var = tk.StringVar(value=choices[selected_index][1])
+        combo = ttk.Combobox(
+            header, textvariable=selection_var,
+            values=[item[1] for item in choices], state="readonly", width=32,
+        )
+        combo.current(selected_index)
+        combo.pack(side="left", fill="x", expand=True, padx=(5, 0))
+
+        detail_label = tk.Label(
+            row, text=choices[selected_index][2], bg=DARK_THEME["surface2"],
+            fg=DARK_THEME["text_muted"], font=FONTS["small"], anchor="w",
+            justify="left", wraplength=700,
+        )
+        detail_label.pack(fill="x", padx=(10, 0), pady=(1, 2))
+        self._subtitle_selection_controls[file_id] = {
+            "combo": combo,
+            "choices": choices,
+            "detail": detail_label,
+        }
+        combo.bind(
+            "<<ComboboxSelected>>",
+            lambda event, fid=file_id: self._on_file_subtitle_stream_selected(fid),
+        )
+
+    def _on_file_subtitle_stream_selected(self, file_id: int):
+        """保存一个文件自己的字幕轨，不影响队列里的其他视频。"""
+        control = self._subtitle_selection_controls.get(file_id)
+        if not control:
+            return
+        index = control["combo"].current()
+        choices = control["choices"]
+        if not 0 <= index < len(choices):
+            return
+        stream_index, _, detail = choices[index]
+        self._set_embedded_subtitle_selection(file_id, stream_index)
+        control["detail"].config(text=detail)
+
+    def _set_embedded_subtitle_selection(self, file_id: int, stream_index: Optional[int]):
+        """写入一个文件的字幕选择；None 表示恢复自动选择。"""
+        info = self.file_info.get(file_id)
+        if stream_index is None:
+            self._embedded_subtitle_selections.pop(file_id, None)
+            return
+        if info and any(stream.index == stream_index for stream in info.subtitle_streams):
+            self._embedded_subtitle_selections[file_id] = stream_index
         else:
-            self.subtitle_stream_combo["values"] = ["未检测到内置字幕"]
-            self.subtitle_stream_combo.current(0)
-            self._subtitle_streams_data = []
-            self.subtitle_detail_label.config(text="当前文件没有可烧录的内置字幕。")
+            self._embedded_subtitle_selections.pop(file_id, None)
 
-    def _on_subtitle_stream_selected(self, event=None):
-        """切换内置字幕时显示完整文件名和字幕标题。"""
-        self._update_subtitle_detail()
+    def _on_subtitle_rows_configure(self, event=None):
+        """刷新滚动区域高度。"""
+        self.subtitle_selection_canvas.configure(
+            scrollregion=self.subtitle_selection_canvas.bbox("all"),
+        )
 
-    def _update_subtitle_detail(self):
-        """显示选中字幕的完整信息，不让长名称被下拉框裁掉。"""
-        selected_index = self.subtitle_stream_combo.current()
-        if 0 <= selected_index < len(getattr(self, "_subtitle_streams_data", [])):
-            self.subtitle_detail_label.config(text=self._subtitle_streams_data[selected_index][3])
+    def _on_subtitle_canvas_configure(self, event=None):
+        """让内层选择行始终贴满滚动面板宽度。"""
+        if event is not None:
+            self.subtitle_selection_canvas.itemconfigure(
+                self._subtitle_selection_canvas_window, width=event.width,
+            )
 
     def _load_external_subtitle(self):
         """加载外挂字幕文件"""
@@ -945,24 +1059,15 @@ class VideoCompressorApp:
         )
 
     def _get_embedded_subtitle_for_file(self, file_id: int):
-        """获取一个文件应烧录的内置字幕：指定条目优先，否则默认条目优先。"""
+        """获取一个文件应烧录的内置字幕：本文件指定条目优先，否则自动选择。"""
         info = self.file_info.get(file_id)
         if not info or not info.subtitle_streams:
             return None
 
-        selected_file_id = None
-        selected_stream_index = None
-        if hasattr(self, '_subtitle_streams_data') and self._subtitle_streams_data:
-            selected_index = self.subtitle_stream_combo.current()
-            if 0 <= selected_index < len(self._subtitle_streams_data):
-                selected_file_id, selected_stream_index, _, _ = self._subtitle_streams_data[selected_index]
-
-        if selected_file_id == file_id and selected_stream_index is not None:
-            for stream in info.subtitle_streams:
-                if stream.index == selected_stream_index:
-                    return stream
-
-        return next((stream for stream in info.subtitle_streams if stream.default), info.subtitle_streams[0])
+        return select_embedded_subtitle_stream(
+            info.subtitle_streams,
+            self._embedded_subtitle_selections.get(file_id),
+        )
 
     def _has_running_tasks(self) -> bool:
         """检查是否仍有实际运行中的 FFmpeg 进程。"""
