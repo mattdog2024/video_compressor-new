@@ -10,4 +10,7 @@
 | 已发布 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.7 | 开始/取消按钮始终可见的布局修复版。 |
 | 已发布 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.8 | ASS/文字字幕清理和真正黑色描边修复版。 |
 | 已发布 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.9 | 每个视频可单独选择内置字幕轨的批量处理版。 |
-| 当前计划发布 | GitHub Release `v1.0.10` | 图片字幕按输出分辨率自动适应大小版。 |
+| 已发布 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.10 | v1.0.10，文字和图片字幕自动适应大小版。 |
+| v1.0.10 发布页 | https://github.com/mattdog2024/video_compressor-new/releases/tag/v1.0.10 | 正式发布页。 |
+| v1.0.10 构建记录 | https://github.com/mattdog2024/video_compressor-new/actions/runs/36652094503 | 33 项回归测试、Windows 打包和上传均成功。 |
+| 当前计划发布 | GitHub Release `v1.0.11` | ASS/SRT 的 480p、720p、1080p 大字号可读性修复版。 |

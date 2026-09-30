@@ -126,7 +126,7 @@ def get_default_settings():
         "skip_start": 0,
         "skip_end": 0,
         "subtitle_mode": "无",
-        "subtitle_font_size": 24,
+        "subtitle_font_size": 42,
         "subtitle_font_color": "#FFFFFF",
         "remove_audio": False,
         "platform_compatibility": True,

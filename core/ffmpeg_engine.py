@@ -307,8 +307,9 @@ class FFmpegEngine:
         if effective_height <= 0:
             return requested_size
 
-        # 480p 取 28，720p 约取 36，1080p/更高取 48。
-        readable_minimum = min(48, max(28, round(effective_height * 0.05)))
+        # 旧阈值（480p=28）在中英双行 ASS 字幕上仍显得过小。改为更直观的
+        # 阅读大小：480p 至少 42、720p 至少 50、1080p/更高至少 60。
+        readable_minimum = min(60, max(42, round(effective_height * 0.07)))
         return max(requested_size, readable_minimum)
 
     def _resolve_encoder(self, options: CompressOptions) -> str:

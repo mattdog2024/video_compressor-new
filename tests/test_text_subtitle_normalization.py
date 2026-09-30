@@ -25,15 +25,15 @@ class TextSubtitleNormalizationTests(unittest.TestCase):
         self.assertIn("FontSize=24", filter_text)
         self.assertIn("PrimaryColour=&H00FFFFFF", filter_text)
         self.assertIn("OutlineColour=&H00000000", filter_text)
-        self.assertIn("Outline=1.5", filter_text)
+        self.assertIn("Outline=2", filter_text)
         self.assertIn("Shadow=0", filter_text)
         self.assertIn("Alignment=2", filter_text)
 
     def test_text_subtitle_font_has_output_based_readable_minimum(self):
         auto_size = FFmpegEngine._effective_text_subtitle_font_size
-        self.assertEqual(auto_size(24, "480p", 1080), 28)
-        self.assertEqual(auto_size(24, "720p", 1080), 36)
-        self.assertEqual(auto_size(24, "1080p", 1080), 48)
+        self.assertEqual(auto_size(24, "480p", 1080), 42)
+        self.assertEqual(auto_size(24, "720p", 1080), 50)
+        self.assertEqual(auto_size(24, "1080p", 1080), 60)
         self.assertEqual(auto_size(60, "480p", 1080), 60)
 
     def test_command_uses_auto_text_font_size_for_small_output(self):
@@ -46,7 +46,7 @@ class TextSubtitleNormalizationTests(unittest.TestCase):
             source_height=1080,
         )
         filter_text = command[command.index("-vf") + 1]
-        self.assertIn("FontSize=28", filter_text)
+        self.assertIn("FontSize=42", filter_text)
 
     def test_embedded_text_is_replaced_by_clean_external_srt_when_ready(self):
         engine = FFmpegEngine()

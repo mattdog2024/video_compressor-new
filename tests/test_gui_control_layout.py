@@ -14,6 +14,13 @@ class GuiControlLayoutTests(unittest.TestCase):
             text.index('self.btn_start = StyledButton'),
         )
 
+    def test_subtitle_size_hint_explains_the_actual_auto_size(self):
+        source = Path(__file__).resolve().parents[1] / "gui" / "app.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertIn("self.subtitle_size_hint_label", text)
+        self.assertIn("def _refresh_subtitle_size_hint", text)
+        self.assertIn("文字实际≥{text_size}；图片自动×{bitmap_scale:.2f}", text)
+
 
 if __name__ == "__main__":
     unittest.main()
